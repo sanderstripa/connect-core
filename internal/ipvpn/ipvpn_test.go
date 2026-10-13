@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
@@ -335,6 +336,15 @@ func TestQUICShutdownAndReconnect(t *testing.T) {
 	defer cancel()
 	for i := 0; i < 25; i++ {
 		c, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
+		deadline := time.Now().Add(2 * time.Second)
+		for e != nil && time.Now().Before(deadline) {
+			var duplicate *quic.ApplicationError
+			if !errors.As(e, &duplicate) || duplicate.ErrorCode != 3 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+			c, e = Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
+		}
 		if e != nil {
 			t.Fatal(i, e)
 		}
@@ -357,22 +367,6 @@ func TestQUICShutdownAndReconnect(t *testing.T) {
 		case <-done:
 		case <-time.After(3 * time.Second):
 			t.Fatal("client did not stop")
-		}
-		// Wait for the server's previous lease to be released, not a fixed sleep.
-		if i < 24 {
-			deadline := time.Now().Add(2 * time.Second)
-			for {
-				probe, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
-				if e == nil {
-					probe.CloseWithError(0, "probe")
-					time.Sleep(10 * time.Millisecond)
-					break
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("lease not released")
-				}
-				time.Sleep(time.Millisecond)
-			}
 		}
 	}
 }

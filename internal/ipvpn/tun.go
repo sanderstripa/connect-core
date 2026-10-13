@@ -4,6 +4,7 @@ package ipvpn
 
 import (
 	"errors"
+	"net"
 	"sync"
 
 	"golang.zx2c4.com/wireguard/tun"
@@ -18,6 +19,9 @@ type native struct {
 func Open(name string) (Device, error) {
 	if e := isolation(); e != nil {
 		return nil, e
+	}
+	if _, e := net.InterfaceByName(name); e == nil {
+		return nil, errors.New("lab refuses an existing interface")
 	}
 	d, e := tun.CreateTUN(name, MTU)
 	if e != nil {

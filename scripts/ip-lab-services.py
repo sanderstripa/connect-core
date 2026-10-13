@@ -52,8 +52,9 @@ def serve():
         threading.Thread(target=udp_server, args=(port,), daemon=True).start()
     tcp = TCP((HOST, 18083), Echo)
     threading.Thread(target=tcp.serve_forever, daemon=True).start()
+    http = http.server.ThreadingHTTPServer((HOST, 18080), HTTP)
     print("lab services ready", flush=True)
-    http.server.ThreadingHTTPServer((HOST, 18080), HTTP).serve_forever()
+    http.serve_forever()
 
 def exchange(port, data, host=HOST):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -97,6 +98,20 @@ def check():
     samples.sort()
     print(json.dumps({"http": "pass", "udp_100": "pass", "dns": "pass", "tcp_binary_8": "pass", "tcp_half_close": "pass", "udp_rtt_ms": {"p50": statistics.median(samples), "p95": samples[94], "p99": samples[98]}, "tcp_1MiB_echo_seconds": elapsed, "tcp_useful_MiB_per_second": 1 / elapsed, "concurrent_tcp_seconds_max": max(durations)}, indent=2), flush=True)
 
+def ready():
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            assert opener.open(f"http://{HOST}:18080/", timeout=0.5).read() == CANARY + b"\n"
+            assert exchange(18082, CANARY) == CANARY
+            print("fixture listeners ready", flush=True)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
 def failure():
     for port in (53, 18082):
         try:
@@ -121,4 +136,4 @@ def denied():
     raise AssertionError("destination policy bypass")
 
 if __name__ == "__main__":
-    {"serve": serve, "check": check, "failure": failure, "denied": denied}[sys.argv[1]]()
+    {"serve": serve, "ready": ready, "check": check, "failure": failure, "denied": denied}[sys.argv[1]]()

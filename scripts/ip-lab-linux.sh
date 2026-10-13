@@ -47,6 +47,7 @@ ip -n "$service" route add 10.231.0.2/32 via 10.232.0.2
 ip netns exec "$edge" sysctl -q -w net.ipv4.ip_forward=1
 ip netns exec "$service" python3 "$root/scripts/ip-lab-services.py" serve >"$artifacts/services.log" 2>&1 &
 pids+=("$!")
+ip netns exec "$service" python3 "$root/scripts/ip-lab-services.py" ready
 ip netns exec "$client" tcpdump -U -n -i cw -w "$artifacts/underlay.pcap" >"$artifacts/capture.log" 2>&1 &
 capture=$!; pids+=("$capture")
 ip netns exec "$edge" "$bin" ip-server "$lab/credentials/ip-server.json" >"$artifacts/server.log" 2>&1 &
