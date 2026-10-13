@@ -250,6 +250,13 @@ func TestCSRProofAndTrust(t *testing.T) {
 	foreignCert, _ := os.ReadFile(other.Cert)
 	bad = enrollment
 	bad.Certificate = string(foreignCert)
+	foreignPEM, _ := os.ReadFile(other.Key)
+	foreignBlock, _ := pem.Decode(foreignPEM)
+	foreignKey, err := x509.ParsePKCS8PrivateKey(foreignBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad.CSR = makeCSR(foreignKey, challenge)
 	if _, e = m.Enroll(bad); e == nil {
 		t.Fatal("foreign certificate accepted")
 	}
@@ -265,5 +272,77 @@ func TestCSRProofAndTrust(t *testing.T) {
 	}
 	if _, e = m.Enroll(enrollment); e == nil {
 		t.Fatal("revoked certificate re-enrolled")
+	}
+}
+
+func TestHotEnrollmentAndExportedClientConnect(t *testing.T) {
+	m, c, original := fixture(t)
+	// Begin with a different allowed pin. The existing trusted cert/key pair is
+	// a real, externally issued client identity, initially absent from this server.
+	seed := Random()
+	delete(m.state.Devices, original)
+	delete(m.state.Config.Clients, original)
+	m.state.Config.Clients[seed] = "10.231.0.2"
+	m.state.Devices[seed] = Device{ID: seed, Name: "seed binding", IP: "10.231.0.2", Access: "enabled"}
+	if e := WriteJSON(m.path, m.state); e != nil {
+		t.Fatal(e)
+	}
+	fresh, e := New(m.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tun := newTUN()
+	fresh.open = func(string) (ipvpn.Device, error) { return tun, nil }
+	defer fresh.Stop()
+	if e = fresh.Start(); e != nil {
+		t.Fatal(e)
+	}
+	ct, e := ipvpn.TLS(ipvpn.Config{Trust: c}, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, e = ipvpn.Dial(ctx, fresh.state.Config.Endpoint, ct, netip.MustParseAddr("10.231.0.3")); e == nil {
+		t.Fatal("unenrolled trusted client connected")
+	}
+	keyPEM, _ := os.ReadFile(c.Key)
+	block, _ := pem.Decode(keyPEM)
+	key, e := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if e != nil {
+		t.Fatal(e)
+	}
+	challenge := Random()
+	raw, e := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: challenge}}, key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cert, _ := os.ReadFile(c.Cert)
+	id, e := fresh.Enroll(Enrollment{Name: "CSR verified", IP: "10.231.0.3", CSR: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: raw})), Certificate: string(cert), Challenge: challenge})
+	if e != nil {
+		t.Fatal(e)
+	}
+	exported, e := fresh.Export(id)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var cfg ipvpn.Config
+	if e = json.Unmarshal(exported, &cfg); e != nil {
+		t.Fatal(e)
+	}
+	cfg.Trust.CA = c.CA
+	cfg.Trust.Cert = c.Cert
+	cfg.Trust.Key = c.Key
+	tlsConfig, e := ipvpn.TLS(cfg, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	q, e := ipvpn.Dial(ctx, cfg.Endpoint, tlsConfig, netip.MustParseAddr(cfg.DeviceIP))
+	if e != nil {
+		t.Fatal("hot enrollment/export failed", e)
+	}
+	defer q.CloseWithError(0, "test done")
+	if !fresh.control.Snapshot()[id].Connected {
+		t.Fatal("no actual enrolled session")
 	}
 }
