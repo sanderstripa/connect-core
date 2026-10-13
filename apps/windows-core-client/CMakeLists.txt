@@ -6,5 +6,7 @@ target_compile_definitions(ConnectCore PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_M
 target_link_libraries(ConnectCore PRIVATE d2d1 dwrite dwmapi comdlg32 shell32 ole32)
 if(MSVC)
  target_compile_options(ConnectCore PRIVATE /W4 /utf-8 /EHsc)
+ # app.rc embeds the DPI-aware asInvoker manifest; do not generate a second one.
+ target_link_options(ConnectCore PRIVATE /MANIFEST:NO)
  set_property(TARGET ConnectCore PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
