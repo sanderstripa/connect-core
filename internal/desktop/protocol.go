@@ -1,0 +1,63 @@
+// Package desktop is the bounded, versioned IPC contract of the laboratory client.
+package desktop
+
+import (
+	"encoding/binary"
+	"errors"
+	"io"
+)
+
+const Version = 1
+const MaxPayload = 32768
+const (
+	Import     byte = 1
+	Connect    byte = 2
+	Disconnect byte = 3
+	Probe      byte = 4
+	Exit       byte = 5
+	Status     byte = 128
+)
+const (
+	Idle uint32 = iota
+	Ready
+	Connecting
+	Connected
+	Failed
+)
+
+// Status payload: state/code uint32, TX/RX/elapsed uint64, endpoint[128].
+const StatusSize = 160
+
+func Read(r io.Reader) (byte, []byte, error) {
+	var h [8]byte
+	if _, e := io.ReadFull(r, h[:]); e != nil {
+		return 0, nil, e
+	}
+	n := binary.LittleEndian.Uint32(h[4:])
+	if h[0] != 'C' || h[1] != 'C' || h[2] != Version || n > MaxPayload {
+		return 0, nil, errors.New("invalid IPC frame")
+	}
+	b := make([]byte, n)
+	_, e := io.ReadFull(r, b)
+	return h[3], b, e
+}
+func Write(w io.Writer, kind byte, b []byte) error {
+	if len(b) > MaxPayload {
+		return errors.New("oversized IPC frame")
+	}
+	h := []byte{'C', 'C', Version, kind, 0, 0, 0, 0}
+	binary.LittleEndian.PutUint32(h[4:], uint32(len(b)))
+	for _, p := range [][]byte{h, b} {
+		for len(p) > 0 {
+			n, e := w.Write(p)
+			if e != nil {
+				return e
+			}
+			if n == 0 {
+				return io.ErrShortWrite
+			}
+			p = p[n:]
+		}
+	}
+	return nil
+}

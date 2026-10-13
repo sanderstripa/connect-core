@@ -21,7 +21,7 @@ type Device interface {
 	Write([]byte) (int, error)
 	Close() error
 }
-type Stats struct{ Sent, Received, Dropped atomic.Uint64 }
+type Stats struct{ Sent, Received, Dropped, SentBytes, ReceivedBytes atomic.Uint64 }
 
 func (s *Stats) Snapshot() map[string]uint64 {
 	return map[string]uint64{"sent_packets": s.Sent.Load(), "received_packets": s.Received.Load(), "dropped_packets": s.Dropped.Load()}
@@ -119,6 +119,7 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 				return
 			}
 			stats.Sent.Add(1)
+			stats.SentBytes.Add(uint64(len(pkt)))
 		}
 	}()
 	go func() {
@@ -142,6 +143,7 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 				return
 			}
 			stats.Received.Add(1)
+			stats.ReceivedBytes.Add(uint64(len(pkt)))
 		}
 	}()
 	e := <-result

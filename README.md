@@ -1,5 +1,8 @@
 # CONNECT Core
 
+Separate native Windows 11 laboratory component: [CONNECT CORE client](apps/windows-core-client/README.md).
+It uses the real CONNECT IP v2 Go engine without changing system routes or the existing CONNECT application.
+
 Experimental network engine, with a separate experimental **CONNECT Protocol**.
 Two working paths in the existing Go engine: legacy loopback TCP forwarding and
 new **CONNECT IP v2**, an isolated IPv4 TUN lab using QUIC DATAGRAM + TLS 1.3 mTLS.
