@@ -3,3 +3,6 @@
 *.exe
 *.key
 *.pem
+/ip-lab-artifacts/
+*.pcap
+__pycache__/

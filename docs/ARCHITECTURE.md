@@ -7,14 +7,17 @@ configuration, bounded resource use, adapters and metrics. **CONNECT Protocol**
 specifies interoperable requests and replies. An engine release may change
 without a wire-format change. Config, protocol and adapter versions are distinct.
 
-The implemented milestone is local TCP forwarding to a fixed allowlisted test
-service. It proves data passes through a client and server, not just a handshake.
-It deliberately skips the installer, panel and TUN until this chain is stable.
+The original milestone is local TCP forwarding to a fixed allowlisted test
+service. The next implemented slice is CONNECT IP v2: native isolated IPv4 TUN,
+QUIC datagrams, mTLS device/address bindings and narrow destination policy.
+See [concrete decisions](DECISIONS.md), [IP lab](IP-LAB.md) and
+[actual validation](VALIDATION.md). Installer/panel and full-device networking
+remain future stages.
 It uses standard-library TLS 1.3, not an original crypto design. Certificates are
 Ed25519-signed lab certificates; TLS negotiates its supported authenticated
 encryption and ephemeral key exchange internally.
 
-## Next architecture
+## Roadmap beyond the isolated IP slice
 
 1. Keep protocol parsing, destination policy and transport dialers independent.
    A future `StreamDialer` returns a stream; a `DatagramSession` is a different
@@ -28,12 +31,12 @@ encryption and ephemeral key exchange internally.
    They retain their own protocol formats/configuration, and do not carry CONNECT
    bytes until a compatible transport bridge actually exists. Existing clients
    cannot speak the new wire format without a new adapter or updated executable.
-4. Add a maintained QUIC library as a separately tested transport. QUIC streams
-   can carry TCP flows; datagrams can carry UDP/IP with bounded queues, MTU and
-   anti-spoof policy. Add HTTP/2 only after defining real tunnel behavior. QUIC
+4. Maintained QUIC datagrams now carry IPv4 with bounded queues, MTU and
+   anti-spoof policy. Direct TCP flow multiplexing over QUIC streams remains
+   optional future work. Add HTTP/2 only after defining real tunnel behavior. QUIC
    and HTTP/2 availability are not guarantees of resistance to filtering.
-5. Add TUN in disposable Linux VMs/network namespaces, then a Windows VM with
-   Wintun. The elevated route/DNS/firewall helper is separate from the ordinary
+5. Linux namespace TUN and Windows Wintun code are now present; cross-OS VM
+   validation remains a required stage. The elevated route/DNS/firewall helper is separate from the ordinary
    user's engine and UI. Establish endpoint bypass routes before full tunneling,
    journal changes and roll back on interruption. IPv6 must be tunneled correctly
    or explicitly blocked; never leave it as a silent direct fallback.
@@ -84,11 +87,12 @@ authentication and leak expectations should pass without tolerance.
 
 ## Infrastructure safety
 
-No Amsterdam access, installers, system services, port 443, NAT, firewall,
-certificates or existing profiles were changed. The current executable rejects
-non-loopback infrastructure. Moving beyond localhost requires a separately
+No Amsterdam access, installers, system services, port 443, host NAT, host firewall,
+production certificates or existing profiles were changed. Legacy v1 rejects
+non-loopback infrastructure; v2 accepts numeric private lab endpoints and narrow
+private destination policies, with explicit isolation restrictions. Real deployment requires a separately
 selected disposable VM/VPS, credentials and ports, plus explicit authorization
 for concrete changes. Prefer a new host rather than the production VPN host.
 Keep lab certificates and address ranges separate. Take a snapshot before TUN
-tests; retain rollback and packet captures. Removing loopback enforcement is a
-reviewed milestone, not a deployment toggle in a production configuration.
+tests; retain rollback and packet captures. Lab support is not authorization
+to deploy to a real server or a production configuration.

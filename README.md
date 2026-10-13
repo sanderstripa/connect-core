@@ -1,16 +1,31 @@
 # CONNECT Core
 
 Experimental network engine, with a separate experimental **CONNECT Protocol**.
-The first implementation is a working, loopback-only TCP forwarding lab in Go.
-It uses the standard library's TLS 1.3 and mutual certificate authentication.
-No custom cipher or cryptographic handshake is implemented.
+Two working paths in the existing Go engine: legacy loopback TCP forwarding and
+new **CONNECT IP v2**, an isolated IPv4 TUN lab using QUIC DATAGRAM + TLS 1.3 mTLS.
+No custom cipher or cryptographic handshake is implemented. Packet policy,
+certificate-bound device addresses and control negotiation are CONNECT's own
+protocol; this is not a cascade of Xray/Sudoku/Mist.
+
+```text
+application -> TUN -> CONNECT IP/2 + QUIC DATAGRAM/mTLS -> server TUN
+            -> isolated Linux routing -> TCP / UDP / DNS test network
+```
+
+Run the real TUN slice using [IP lab instructions](docs/IP-LAB.md).
+Linux runs only in disposable network namespaces. Windows Wintun code and
+loopback packet tests are included; Windows-VM-to-Linux-VM testing is a separate
+required gate. See [validation evidence](docs/VALIDATION.md) for what actually ran.
+No real VPS was accessed. Amsterdam and the Danish services are untouched.
+
+## Legacy TCP lab (v1)
 
 ```text
 HTTP application -> local TCP forwarder -> TLS 1.3 / mTLS
                 -> CONNECT server -> allowlisted local HTTP service
 ```
 
-This is a TCP tunnel prototype, not a full-device VPN. It does not install TUN,
+The v1 commands are a TCP tunnel prototype, not a full-device VPN. They do not install TUN,
 alter routes, DNS, firewall, proxy settings or existing services, or contact the
 Amsterdam VPN. Numeric loopback addresses are enforced for listeners, remote
 server addresses and destination services. External deployment is deliberately
@@ -18,7 +33,8 @@ unsupported. There is no direct-network fallback and no censorship-bypass claim.
 
 ## Run the vertical chain
 
-Go 1.26.4 or newer; no external Go dependencies. From the repository directory:
+Go 1.27.0 is the tested toolchain. QUIC/TUN dependencies are pinned in go.mod/go.sum.
+From the repository directory:
 
 ```powershell
 go test -v ./...
@@ -71,10 +87,14 @@ under your own account and do not treat generated keys as production secrets.
 - Fingerprint policy is a startup snapshot. Change it and restart the lab server
   to revoke a certificate and close existing flows; hot revocation is not built.
 
-UDP, SOCKS, TUN, reconnecting existing flows, multiplexing, HTTP/2, QUIC,
-Xray/Sudoku/Mist runtime adapters and administration UI are **not implemented**.
-All interfaces run as the ordinary user. Other applications' traffic is outside
-this tunnel, so passing these tests says nothing about system-wide VPN leak safety.
+The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/ICMP
+packets, QUIC datagrams, static device leases and private destination policy.
+SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
+route/DNS/firewall management, full-device kill switch, runtime adapters and
+administration UI are **not implemented**. Other applications' traffic outside
+the lab is not covered. Namespace leak tests do not prove system-wide Windows
+VPN leak safety. Dependencies/licenses and exact reuse are documented in
+[decisions](docs/DECISIONS.md) and [refreshed audit](docs/IMPLEMENTATION-AUDIT.md).
 
 ## Checks
 
