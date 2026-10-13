@@ -31,8 +31,30 @@ real network namespaces, TCP/UDP/DNS payloads and the authenticated panel API. I
 checks nonzero byte counters, active revocation, complete controller restart and
 certificate rejection after restart. A separate browser job saves both themes.
 
-CI outcome and PR URL are added after publication. An installed panel on Windows
-does not by itself prove Windows-to-Linux VPN operation or remote VPS suitability.
+Published as [PR #3](https://github.com/sanderstripa/connect-core/pull/3), branch
+`feat/connect-ui-local-control`, without merging. The complete
+[CI run 38466332069](https://github.com/sanderstripa/connect-core/actions/runs/38466332069)
+for implementation commit `ffb5d97063e47773a6c84a8a089adc8458000d07` finished successfully:
+
+| Gate | Result |
+| --- | --- |
+| Linux tests, race, vet, builds, packet/control fuzzing | passed |
+| Windows tests, race, vet, builds, packet/control fuzzing | passed |
+| Original and managed real Linux TUN TCP/UDP/DNS | passed |
+| Active revocation + full controller restart + reconnect rejection | passed |
+| Windows native Wintun DNS/QUIC fixture | passed |
+| Browser authorization/actions/themes/mobile/offline-state checks | passed |
+
+[Managed TUN artifacts](https://github.com/sanderstripa/connect-core/actions/runs/38466332069/artifacts/11848558130)
+contain `management-check.json`, real traffic measurements and underlay capture.
+The next test commit `6b4f3a2` additionally proves a trusted-but-unregistered
+certificate is denied before enrollment, then accepted immediately after signed
+CSR enrollment using the actual exported configuration, without restarting the
+server; this test passed locally and is included in subsequent PR CI runs.
+
+An installed panel on Windows does not by itself prove Windows-to-Linux VPN
+operation or remote VPS suitability. The Windows native job uses the existing
+packet fixture; the managed real TUN proof is Linux-only.
 
 ## Deliberately unavailable
 
