@@ -17,9 +17,9 @@ struct Snapshot { uint32_t state, code; uint64_t tx, rx, elapsed; char endpoint[
 static_assert(sizeof(Snapshot)==160);
 HWND window; HANDLE input=nullptr, output=nullptr, process=nullptr, job=nullptr;
 std::thread reader; Snapshot current{}; bool dark=false, diagnostics=false, shutting=false, coreAlive=false;
-float dpi=96; double rxRate=0,txRate=0; ULONGLONG lastSample=0; uint64_t oldTx=0,oldRx=0;
+float dpi=96; int scroll=0; double rxRate=0,txRate=0; ULONGLONG lastSample=0; uint64_t oldTx=0,oldRx=0;
 ID2D1Factory* factory=nullptr; ID2D1HwndRenderTarget* target=nullptr; ID2D1SolidColorBrush* brush=nullptr;
-IDWriteFactory* writeFactory=nullptr; IDWriteTextFormat *body=nullptr,*small=nullptr,*title=nullptr,*large=nullptr;
+IDWriteFactory* writeFactory=nullptr; IDWriteTextFormat *body=nullptr,*captionFont=nullptr,*title=nullptr,*large=nullptr;
 std::vector<std::wstring> logs;
 template<class T> void release(T*& p){if(p){p->Release();p=nullptr;}}
 std::wstring utf8(const char* p,int n){int len=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,nullptr,0);std::wstring s(len,L' ');if(len)MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,s.data(),len);return s;}
@@ -59,37 +59,41 @@ void panel(float x,float y,float w,float h,D2D1_COLOR_F color,float radius=12){b
 void paint(){
  if(!target){RECT r;GetClientRect(window,&r);if(FAILED(factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),D2D1::HwndRenderTargetProperties(window,D2D1::SizeU(r.right,r.bottom)),&target)))return;target->SetDpi(dpi,dpi);if(FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0),&brush))){release(target);return;}}
  auto bg=D2D1::ColorF(dark?0x141719:0xf5f6f7), fg=D2D1::ColorF(dark?0xeceded:0x20272b),muted=D2D1::ColorF(dark?0x9da6ad:0x64717b),card=D2D1::ColorF(dark?0x20262a:0xffffff),accent=D2D1::ColorF(dark?0x91b9a9:0x365e50);
- target->BeginDraw();target->Clear(bg);
- text(L"CONNECT CORE",28,25,340,title,fg);panel(394,24,96,34,card,8);text(dark?L"Светлая":L"Тёмная",407,31,80,small,muted);
- text(L"ЛАБОРАТОРНЫЙ РЕЖИМ · БЕЗ СИСТЕМНОГО VPN",28,76,470,small,accent);
- panel(28,111,462,86,card);text(L"ТЕКУЩИЙ СЕРВЕР",46,125,420,small,muted);
+ target->BeginDraw();target->SetTransform(D2D1::Matrix3x2F::Translation(0,-static_cast<float>(scroll)));target->Clear(bg);
+ text(L"CONNECT CORE",28,25,340,title,fg);panel(394,24,96,34,card,8);text(dark?L"Светлая":L"Тёмная",407,31,80,captionFont,muted);
+ text(L"ЛАБОРАТОРНЫЙ РЕЖИМ · БЕЗ СИСТЕМНОГО VPN",28,76,470,captionFont,accent);
+ panel(28,111,462,86,card);text(L"ТЕКУЩИЙ СЕРВЕР",46,125,420,captionFont,muted);
  size_t len=strnlen_s(current.endpoint,128);text(len?utf8(current.endpoint,static_cast<int>(len)):L"Конфигурация не добавлена",46,151,420,body,fg);
  panel(28,220,462,74,current.state==3?accent:card,18);
  text(current.state==3||current.state==2?L"Отключить":L"Подключить",171,241,280,body,current.state==3?bg:fg);
  if(current.state==2){float phase=static_cast<float>(GetTickCount64()%1400)/1400;brush->SetColor(accent);target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(143,256),4+2*std::sin(phase*6.283f),4+2*std::sin(phase*6.283f)),brush);}
- text(stateText(),28,310,462,small,muted);
+ text(stateText(),28,310,462,captionFont,muted);
  panel(28,351,225,76,card);panel(265,351,225,76,card);panel(28,439,225,76,card);panel(265,439,225,76,card);
- text(L"ВХОДЯЩИЙ IP-ТРАФИК",44,362,204,small,muted);text(amount(rxRate)+L"/с",44,386,204,body,fg);
- text(L"ИСХОДЯЩИЙ IP-ТРАФИК",281,362,204,small,muted);text(amount(txRate)+L"/с",281,386,204,body,fg);
- text(L"ЗА СЕАНС · IP-БАЙТЫ",44,450,204,small,muted);text(amount(static_cast<double>(current.tx+current.rx)),44,474,204,body,fg);
- text(L"ЗАДЕРЖКА",281,450,204,small,muted);text(L"Недоступна",281,474,204,body,muted);
- panel(28,539,225,42,card,8);panel(265,539,225,42,card,8);text(L"+  Конфигурация",49,550,198,small,fg);text(L"Диагностика",308,550,170,small,fg);
- text(L"Трафик компьютера не направляется в этот сеанс.",28,600,462,small,muted);text(L"Тестовый IP-пакет отправляется только по вашей команде.",28,622,462,small,muted);
- if(diagnostics){panel(28,668,462,190,card);text(L"ДИАГНОСТИКА",44,681,420,small,muted);text(L"Ядро: "+std::wstring(coreAlive?L"работает":L"остановлено")+L" · транспорт: "+(current.state==3?L"QUIC / mTLS":L"не установлен"),44,707,420,small,fg);text(errorText(),44,730,420,small,muted);text(L"Время сеанса: "+std::to_wstring(current.elapsed/1000)+L" с",44,754,420,small,muted);panel(44,792,194,42,bg,8);panel(250,792,222,42,bg,8);text(L"Отправить IP-пробу",58,804,182,small,fg);text(L"Копировать журнал",268,804,198,small,fg);}
+ text(L"ВХОДЯЩИЙ IP-ТРАФИК",44,362,204,captionFont,muted);text(amount(rxRate)+L"/с",44,386,204,body,fg);
+ text(L"ИСХОДЯЩИЙ IP-ТРАФИК",281,362,204,captionFont,muted);text(amount(txRate)+L"/с",281,386,204,body,fg);
+ text(L"ЗА СЕАНС · IP-БАЙТЫ",44,450,204,captionFont,muted);text(amount(static_cast<double>(current.tx+current.rx)),44,474,204,body,fg);
+ text(L"ЗАДЕРЖКА",281,450,204,captionFont,muted);text(L"Недоступна",281,474,204,body,muted);
+ panel(28,539,225,42,card,8);panel(265,539,225,42,card,8);text(L"+  Конфигурация",49,550,198,captionFont,fg);text(L"Диагностика",308,550,170,captionFont,fg);
+ text(L"Трафик компьютера не направляется в этот сеанс.",28,600,462,captionFont,muted);text(L"Тестовый IP-пакет отправляется только по вашей команде.",28,622,462,captionFont,muted);
+ if(diagnostics){panel(28,668,462,190,card);text(L"ДИАГНОСТИКА",44,681,420,captionFont,muted);text(L"Ядро: "+std::wstring(coreAlive?L"работает":L"остановлено")+L" · транспорт: "+(current.state==3?L"QUIC / mTLS":L"не установлен"),44,707,420,captionFont,fg);text(errorText(),44,730,420,captionFont,muted);text(L"Время сеанса: "+std::to_wstring(current.elapsed/1000)+L" с",44,754,420,captionFont,muted);panel(44,792,194,42,bg,8);panel(250,792,222,42,bg,8);text(L"Отправить IP-пробу",58,804,182,captionFont,fg);text(L"Копировать журнал",268,804,198,captionFont,fg);}
+ if(diagnostics){text(L"БЕЗОПАСНЫЙ ЖУРНАЛ · ПОСЛЕДНИЕ СОБЫТИЯ",28,875,462,captionFont,muted);size_t start=logs.size()>3?logs.size()-3:0;for(size_t i=start;i<logs.size();++i)text(logs[i],28,900+static_cast<float>((i-start)*35),462,captionFont,muted,34);}
  if(target->EndDraw()==D2DERR_RECREATE_TARGET){release(brush);release(target);}
 }
-void resizeWindow(){RECT r{0,0,static_cast<LONG>(518*dpi/96),static_cast<LONG>((diagnostics?886:665)*dpi/96)};AdjustWindowRectExForDpi(&r,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE,0,static_cast<UINT>(dpi));SetWindowPos(window,nullptr,0,0,r.right-r.left,r.bottom-r.top,SWP_NOMOVE|SWP_NOZORDER);}
+void updateScroll(){RECT r;GetClientRect(window,&r);SCROLLINFO s{sizeof(s),SIF_RANGE|SIF_PAGE|SIF_POS};s.nMax=(diagnostics?1024:665)-1;s.nPage=static_cast<UINT>(r.bottom*96/dpi);scroll=std::clamp(scroll,0,std::max(0,s.nMax-static_cast<int>(s.nPage)+1));s.nPos=scroll;SetScrollInfo(window,SB_VERT,&s,TRUE);}
+void resizeWindow(){RECT r{0,0,static_cast<LONG>(518*dpi/96),static_cast<LONG>((diagnostics?1024:665)*dpi/96)};AdjustWindowRectExForDpi(&r,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,FALSE,0,static_cast<UINT>(dpi));MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&monitor);int h=std::min<int>(r.bottom-r.top,monitor.rcWork.bottom-monitor.rcWork.top);RECT position;GetWindowRect(window,&position);int y=std::clamp<int>(position.top,monitor.rcWork.top,monitor.rcWork.bottom-h);SetWindowPos(window,nullptr,position.left,y,r.right-r.left,h,SWP_NOZORDER);updateScroll();}
 void importConfig(){if(current.state==2||current.state==3){MessageBoxW(window,L"Отключите сеанс перед импортом.",L"CONNECT CORE",MB_OK);return;}wchar_t path[32768]{};OPENFILENAMEW f{sizeof(f)};f.hwndOwner=window;f.lpstrFilter=L"CONNECT IP v2 (*.json)\0*.json\0";f.lpstrFile=path;f.nMaxFile=32768;f.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;if(GetOpenFileNameW(&f)){int n=WideCharToMultiByte(CP_UTF8,0,path,-1,nullptr,0,nullptr,nullptr);std::string p(n,'\0');WideCharToMultiByte(CP_UTF8,0,path,-1,p.data(),n,nullptr,nullptr);p.pop_back();command(1,p);}}
 void copyLogs(){std::wstring s=L"CONNECT CORE — packet-only laboratory\r\n";for(const auto& l:logs)s+=l+L"\r\n";s+=errorText()+L"\r\n";if(OpenClipboard(window)){auto mem=GlobalAlloc(GMEM_MOVEABLE,(s.size()+1)*sizeof(wchar_t));if(mem){void* p=GlobalLock(mem);if(p){memcpy(p,s.c_str(),(s.size()+1)*sizeof(wchar_t));GlobalUnlock(mem);EmptyClipboard();if(!SetClipboardData(CF_UNICODETEXT,mem))GlobalFree(mem);}else GlobalFree(mem);}CloseClipboard();}}
 LRESULT CALLBACK wndproc(HWND h,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
  case WM_PAINT:{PAINTSTRUCT p;BeginPaint(h,&p);paint();EndPaint(h,&p);return 0;}
  case WM_ERASEBKGND:return 1;
- case WM_SIZE:if(target)target->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));return 0;
+ case WM_SIZE:if(target)target->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));if(window)updateScroll();return 0;
+ case WM_MOUSEWHEEL:scroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*48;updateScroll();InvalidateRect(h,nullptr,FALSE);return 0;
+ case WM_VSCROLL:{SCROLLINFO s{sizeof(s),SIF_ALL};GetScrollInfo(h,SB_VERT,&s);switch(LOWORD(wp)){case SB_LINEUP:scroll-=30;break;case SB_LINEDOWN:scroll+=30;break;case SB_PAGEUP:scroll-=s.nPage;break;case SB_PAGEDOWN:scroll+=s.nPage;break;case SB_THUMBTRACK:scroll=s.nTrackPos;break;}updateScroll();InvalidateRect(h,nullptr,FALSE);return 0;}
  case WM_DPICHANGED:{dpi=static_cast<float>(HIWORD(wp));if(target)target->SetDpi(dpi,dpi);auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);return 0;}
  case WM_TIMER:if(current.state==2)InvalidateRect(h,nullptr,FALSE);return 0;
- case Update:{auto p=reinterpret_cast<Snapshot*>(lp);ULONGLONG now=GetTickCount64();if(lastSample&&now>lastSample&&p->tx>=oldTx&&p->rx>=oldRx){txRate=static_cast<double>(p->tx-oldTx)*1000/(now-lastSample);rxRate=static_cast<double>(p->rx-oldRx)*1000/(now-lastSample);}else txRate=rxRate=0;lastSample=now;oldTx=p->tx;oldRx=p->rx;if(p->state!=current.state||p->code!=current.code){current=*p;addLog(stateText()+L" · "+errorText());}else current=*p;delete p;InvalidateRect(h,nullptr,FALSE);return 0;}
+ case Update:{auto p=reinterpret_cast<Snapshot*>(lp);ULONGLONG now=GetTickCount64();if(lastSample&&now>lastSample&&p->tx>=oldTx&&p->rx>=oldRx){txRate=static_cast<double>(p->tx-oldTx)*1000/(now-lastSample);rxRate=static_cast<double>(p->rx-oldRx)*1000/(now-lastSample);}else txRate=rxRate=0;lastSample=now;oldTx=p->tx;oldRx=p->rx;if(p->state!=current.state||p->code!=current.code){current=*p;addLog(stateText()+L" · "+errorText());if(current.state==2)SetTimer(h,1,40,nullptr);else KillTimer(h,1);}else current=*p;delete p;InvalidateRect(h,nullptr,FALSE);return 0;}
  case WorkerExit:if(!shutting){coreAlive=false;txRate=rxRate=0;addLog(L"Ядро завершилось; прямой обход не выполняется");InvalidateRect(h,nullptr,FALSE);}return 0;
- case WM_LBUTTONUP:{float x=static_cast<short>(LOWORD(lp))*96/dpi,y=static_cast<short>(HIWORD(lp))*96/dpi;
+ case WM_LBUTTONUP:{float x=static_cast<short>(LOWORD(lp))*96/dpi,y=static_cast<short>(HIWORD(lp))*96/dpi+scroll;
   if(x>=394&&x<=490&&y>=24&&y<=58){dark=!dark;BOOL v=dark;DwmSetWindowAttribute(h,20,&v,sizeof(v));HKEY key;if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\ConnectCoreLab",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS){DWORD value=dark;RegSetValueExW(key,L"Dark",0,REG_DWORD,reinterpret_cast<BYTE*>(&value),4);RegCloseKey(key);}}
   else if(x>=28&&x<=490&&y>=220&&y<=294){if(current.state==3||current.state==2)command(3);else if(current.state!=0&&coreAlive){if(MessageBoxW(h,L"Запустить лабораторный CONNECT IP v2 сеанс?\n\nСистемный VPN не включается. Маршруты, DNS и Wintun не изменяются. Подключение использует сервер из импортированной конфигурации.",L"Лабораторный режим",MB_OKCANCEL|MB_ICONINFORMATION)==IDOK)command(2);}}
   else if(y>=539&&y<=581){if(x>=28&&x<=253)importConfig();else if(x>=265&&x<=490){diagnostics=!diagnostics;resizeWindow();}}
@@ -102,10 +106,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
  CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
  if(FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,&factory))||FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(&writeFactory))))return 1;
  auto font=[](float size,DWRITE_FONT_WEIGHT weight,IDWriteTextFormat** out){return writeFactory->CreateTextFormat(L"Segoe UI Variable",nullptr,weight,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"ru-RU",out);};
- if(FAILED(font(18,DWRITE_FONT_WEIGHT_MEDIUM,&body))||FAILED(font(12,DWRITE_FONT_WEIGHT_NORMAL,&small))||FAILED(font(24,DWRITE_FONT_WEIGHT_SEMI_BOLD,&title)))return 1;
+ if(FAILED(font(18,DWRITE_FONT_WEIGHT_MEDIUM,&body))||FAILED(font(12,DWRITE_FONT_WEIGHT_NORMAL,&captionFont))||FAILED(font(24,DWRITE_FONT_WEIGHT_SEMI_BOLD,&title)))return 1;
  DWORD value=0,size=4;if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\ConnectCoreLab",L"Dark",RRF_RT_REG_DWORD,nullptr,&value,&size)==ERROR_SUCCESS)dark=value!=0;
  WNDCLASSW c{};c.hInstance=instance;c.lpfnWndProc=wndproc;c.lpszClassName=L"ConnectCoreLabWindow";c.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassW(&c);
- window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
- if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");SetTimer(window,1,40,nullptr);ShowWindow(window,show);
- MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(small);release(title);release(large);release(writeFactory);release(factory);CoUninitialize();return 0;
+ window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
+ if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
+ MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(captionFont);release(title);release(large);release(writeFactory);release(factory);CoUninitialize();return 0;
 }

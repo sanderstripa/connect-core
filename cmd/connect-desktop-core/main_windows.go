@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -181,6 +182,7 @@ type worker struct {
 	device      *packetDevice
 	stats       *ipvpn.Stats
 	since       time.Time
+	elapsed     time.Duration
 	output      sync.Mutex
 	writer      io.Writer
 }
@@ -194,9 +196,11 @@ func (w *worker) emit() {
 		binary.LittleEndian.PutUint64(p[8:], w.stats.SentBytes.Load())
 		binary.LittleEndian.PutUint64(p[16:], w.stats.ReceivedBytes.Load())
 	}
-	if !w.since.IsZero() {
-		binary.LittleEndian.PutUint64(p[24:], uint64(time.Since(w.since).Milliseconds()))
+	elapsed := w.elapsed
+	if w.state == desktop.Connected {
+		elapsed = time.Since(w.since)
 	}
+	binary.LittleEndian.PutUint64(p[24:], uint64(elapsed.Milliseconds()))
 	copy(p[32:], w.b.Config.Endpoint)
 	w.mu.Unlock()
 	w.output.Lock()
@@ -242,6 +246,7 @@ func (w *worker) connect() {
 	w.stats = &ipvpn.Stats{}
 	stats := w.stats
 	w.since = time.Time{}
+	w.elapsed = 0
 	w.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -267,6 +272,9 @@ func (w *worker) connect() {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.device = nil
+		if !w.since.IsZero() {
+			w.elapsed = time.Since(w.since)
+		}
 		if ctx.Err() != nil {
 			w.state = desktop.Ready
 			w.code = 0
@@ -319,6 +327,8 @@ func (w *worker) probe() {
 	}
 }
 func main() {
+	// Library diagnostics cannot contaminate the binary IPC or expose credentials.
+	log.SetOutput(io.Discard)
 	// This process is exclusively launched with inherited, private anonymous pipes.
 	if len(os.Args) != 2 || os.Args[1] != "--ipc" {
 		return
@@ -380,6 +390,7 @@ func main() {
 				w.code = 0
 				w.stats = nil
 				w.since = time.Time{}
+				w.elapsed = 0
 			}
 			w.mu.Unlock()
 		case desktop.Connect:
