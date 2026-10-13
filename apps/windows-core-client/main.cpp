@@ -19,7 +19,7 @@ HWND window; HANDLE input=nullptr, output=nullptr, process=nullptr, job=nullptr;
 std::thread reader; Snapshot current{}; bool dark=false, diagnostics=false, shutting=false, coreAlive=false;
 float dpi=96; int scroll=0; double rxRate=0,txRate=0; ULONGLONG lastSample=0; uint64_t oldTx=0,oldRx=0;
 ID2D1Factory* factory=nullptr; ID2D1HwndRenderTarget* target=nullptr; ID2D1SolidColorBrush* brush=nullptr;
-IDWriteFactory* writeFactory=nullptr; IDWriteTextFormat *body=nullptr,*captionFont=nullptr,*title=nullptr,*large=nullptr;
+IDWriteFactory* writeFactory=nullptr; IDWriteTextFormat *body=nullptr,*captionFont=nullptr,*title=nullptr,*actionFont=nullptr;
 std::vector<std::wstring> logs;
 template<class T> void release(T*& p){if(p){p->Release();p=nullptr;}}
 std::wstring utf8(const char* p,int n){int len=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,nullptr,0);std::wstring s(len,L' ');if(len)MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,s.data(),len);return s;}
@@ -65,7 +65,7 @@ void paint(){
  panel(28,111,462,86,card);text(L"ТЕКУЩИЙ СЕРВЕР",46,125,420,captionFont,muted);
  size_t len=strnlen_s(current.endpoint,128);text(len?utf8(current.endpoint,static_cast<int>(len)):L"Конфигурация не добавлена",46,151,420,body,fg);
  panel(28,220,462,74,current.state==3?accent:card,18);
- text(current.state==3||current.state==2?L"Отключить":L"Подключить",171,241,280,body,current.state==3?bg:fg);
+ text(current.state==3||current.state==2?L"Отключить":L"Подключить",28,220,462,actionFont,current.state==3?bg:fg,74);
  if(current.state==2){float phase=static_cast<float>(GetTickCount64()%1400)/1400;brush->SetColor(accent);target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(143,256),4+2*std::sin(phase*6.283f),4+2*std::sin(phase*6.283f)),brush);}
  text(stateText(),28,310,462,captionFont,muted);
  panel(28,351,225,76,card);panel(265,351,225,76,card);panel(28,439,225,76,card);panel(265,439,225,76,card);
@@ -86,6 +86,7 @@ void copyLogs(){std::wstring s=L"CONNECT CORE — packet-only laboratory\r\n";fo
 LRESULT CALLBACK wndproc(HWND h,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
  case WM_PAINT:{PAINTSTRUCT p;BeginPaint(h,&p);paint();EndPaint(h,&p);return 0;}
  case WM_ERASEBKGND:return 1;
+ case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT p;GetCursorPos(&p);ScreenToClient(h,&p);float x=p.x*96/dpi,y=p.y*96/dpi+scroll;bool clickable=(x>=394&&x<=490&&y>=24&&y<=58)||(x>=28&&x<=490&&y>=220&&y<=294)||(x>=28&&x<=490&&y>=539&&y<=581)||(diagnostics&&x>=44&&x<=472&&y>=792&&y<=834);SetCursor(LoadCursorW(nullptr,clickable?IDC_HAND:IDC_ARROW));return TRUE;}break;
  case WM_SIZE:if(target)target->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));if(window)updateScroll();return 0;
  case WM_MOUSEWHEEL:scroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*48;updateScroll();InvalidateRect(h,nullptr,FALSE);return 0;
  case WM_VSCROLL:{SCROLLINFO s{sizeof(s),SIF_ALL};GetScrollInfo(h,SB_VERT,&s);switch(LOWORD(wp)){case SB_LINEUP:scroll-=30;break;case SB_LINEDOWN:scroll+=30;break;case SB_PAGEUP:scroll-=s.nPage;break;case SB_PAGEDOWN:scroll+=s.nPage;break;case SB_THUMBTRACK:scroll=s.nTrackPos;break;}updateScroll();InvalidateRect(h,nullptr,FALSE);return 0;}
@@ -107,10 +108,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
  CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
  if(FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,&factory))||FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(&writeFactory))))return 1;
  auto font=[](float size,DWRITE_FONT_WEIGHT weight,IDWriteTextFormat** out){return writeFactory->CreateTextFormat(L"Segoe UI Variable",nullptr,weight,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"ru-RU",out);};
- if(FAILED(font(18,DWRITE_FONT_WEIGHT_MEDIUM,&body))||FAILED(font(12,DWRITE_FONT_WEIGHT_NORMAL,&captionFont))||FAILED(font(24,DWRITE_FONT_WEIGHT_SEMI_BOLD,&title)))return 1;
+ if(FAILED(font(18,DWRITE_FONT_WEIGHT_MEDIUM,&body))||FAILED(font(12,DWRITE_FONT_WEIGHT_NORMAL,&captionFont))||FAILED(font(24,DWRITE_FONT_WEIGHT_SEMI_BOLD,&title))||FAILED(font(20,DWRITE_FONT_WEIGHT_MEDIUM,&actionFont)))return 1;
+ actionFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);actionFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
  DWORD value=0,size=4;if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\ConnectCoreLab",L"Dark",RRF_RT_REG_DWORD,nullptr,&value,&size)==ERROR_SUCCESS)dark=value!=0;
  WNDCLASSW c{};c.hInstance=instance;c.lpfnWndProc=wndproc;c.lpszClassName=L"ConnectCoreLabWindow";c.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassW(&c);
  window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
  if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
- MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(captionFont);release(title);release(large);release(writeFactory);release(factory);CoUninitialize();return 0;
+ MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(captionFont);release(title);release(actionFont);release(writeFactory);release(factory);CoUninitialize();return 0;
 }
