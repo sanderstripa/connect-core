@@ -3,9 +3,10 @@
 ## Verified versus prepared
 
 This milestone adds real packet transport and native TUN implementations, with
-Linux namespace CI and Windows/Linux packet/crypto tests. See VALIDATION.md for
-actual run evidence. A Windows Wintun implementation compiling is not proof of
-Windows -> Linux device connectivity. No VPS has been accessed or modified.
+Linux namespace CI and Windows/Linux packet/crypto tests. The separate opted-in
+Windows CI job also verifies an OS DNS packet through a real Wintun adapter and
+QUIC with a server packet fixture. See VALIDATION.md for run evidence. That is
+not proof of Windows -> Linux device connectivity. No VPS was accessed or modified.
 
 ## Linux: complete vertical test
 
@@ -90,7 +91,7 @@ New-NetRoute -InterfaceIndex $labInterface.ifIndex -DestinationPrefix '10.232.0.
    Core; verify no plaintext UDP/53, TCP test traffic, DNS question or canary on
    the vNIC. Check the VM has no alternate gateway/default route, disable IPv6
    on its disposable vNIC or use a switch that cannot carry IPv6 outside the lab.
-   The engine itself does not configure Windows IPv6 or a kill switch.
+The engine itself does not configure Windows IPv6 or a kill switch.
 7. Stop Core; delete only the added /32 route and IP if still present, using the
    captured interface index. Remove the disposable VM/snapshot afterwards.
 
