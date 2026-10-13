@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -326,5 +328,17 @@ func TestMalformedRequestOverTLS(t *testing.T) {
 	}
 	if ne, ok := e.(net.Error); ok && ne.Timeout() {
 		t.Fatal("malformed request did not close promptly")
+	}
+}
+
+func TestConfigBoundary(t *testing.T) {
+	for _, raw := range []string{`{"config_version":2}`, `{"config_version":1,"unknown":true}`, `{"config_version":1} {}`, `{"config_version":1}` + string(bytes.Repeat([]byte(" "), 65536))} {
+		p := filepath.Join(t.TempDir(), "config.json")
+		if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if _, e := core.Load(p); e == nil {
+			t.Fatal("invalid/oversized config accepted")
+		}
 	}
 }

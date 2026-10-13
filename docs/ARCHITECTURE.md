@@ -76,7 +76,9 @@ Sudoku or Mist profiles to CONNECT Protocol.
 
 The first benchmark is local and counts round-trip bytes, excludes handshake and
 contains no impaired-network test. Repeat under documented hardware and topology
-before comparing results. Define per-environment budgets after measuring a direct
+before comparing results. Coarse host timers can produce a zero-duration sample;
+that is measurement resolution, not zero network latency. Define per-environment
+budgets after measuring a direct
 baseline; do not invent throughput/latency targets beforehand. Fixed correctness,
 authentication and leak expectations should pass without tolerance.
 

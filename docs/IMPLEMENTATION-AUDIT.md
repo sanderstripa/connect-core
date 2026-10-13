@@ -57,6 +57,18 @@ Reading this header code alone is not a full security assessment of VLESS or its
 new optional encryption modes. CONNECT's prototype simply uses TLS 1.3 mTLS and
 does not copy the VLESS authentication model or Reality implementation.
 
+Also inspected pinned v26.3.27 `app/dispatcher/default.go`,
+`proxy/vmess/aead/authid.go`, `proxy/trojan/protocol.go` and
+`transport/internet/reality/reality.go`. The dispatcher separates inbound links,
+routing decisions, policy/statistics and outbound handlers. VMess AEAD AuthID
+processing has timestamp checks and an anti-replay filter; it is protocol-specific
+authentication, not a general library to transplant into CONNECT. Trojan uses
+its own authenticated request header and TCP/UDP framing. Reality integrates
+uTLS, an X25519-derived authentication key, HKDF and peer-certificate verification
+behavior specific to Reality; it is not a flag that makes arbitrary TLS code
+compatible. These observations support modular adapters and standard TLS for
+the initial CONNECT implementation rather than reimplementing these stacks.
+
 For future compatibility, manage Xray as a pinned subprocess adapter, probe its
 version and validate generated configs before launch. Test with the actual
 packaged version. Retain upstream licenses if distributing it. Existing profiles

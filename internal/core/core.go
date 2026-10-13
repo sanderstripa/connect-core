@@ -44,6 +44,13 @@ func Load(path string) (Config, error) {
 		return c, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return c, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 65536 {
+		return c, errors.New("configuration must be a regular file up to 64 KiB")
+	}
 	d := json.NewDecoder(io.LimitReader(f, 65537))
 	d.DisallowUnknownFields()
 	if err = d.Decode(&c); err != nil {
