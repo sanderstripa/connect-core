@@ -99,7 +99,15 @@ func (b bundle) tls() (*tls.Config, error) {
 	if !roots.AppendCertsFromPEM(b.CA) {
 		return nil, errors.New("invalid CA")
 	}
-	if _, e = leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); e != nil {
+	intermediates := x509.NewCertPool()
+	for _, raw := range pair.Certificate[1:] {
+		cert, err := x509.ParseCertificate(raw)
+		if err != nil {
+			return nil, err
+		}
+		intermediates.AddCert(cert)
+	}
+	if _, e = leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); e != nil {
 		return nil, e
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}, RootCAs: roots, ServerName: b.Config.Trust.ServerName, NextProtos: []string{ipvpn.ALPN}, SessionTicketsDisabled: true}, nil

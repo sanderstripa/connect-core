@@ -5,6 +5,10 @@ No existing CONNECT user application is modified. Start `ConnectCore.exe` with
 `connect-desktop-core.exe` beside it. Runs as the ordinary user; no installation,
 browser runtime, service, startup task, administrator token or Wintun is needed.
 
+Keyboard: F2 imports configuration, Space connects/disconnects, Escape disconnects,
+F6 opens diagnostics, F8 toggles the theme. The window scrolls when its content
+does not fit the current monitor at the selected DPI.
+
 ## Build
 
 Requires Go 1.27.0, CMake 3.20+, Visual Studio 2022 C++ tools and Windows SDK:

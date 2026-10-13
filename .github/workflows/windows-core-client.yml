@@ -21,6 +21,13 @@ jobs:
       - run: cmake --build build/desktop --config Release
       - run: Copy-Item build/desktop/Release/ConnectCore.exe dist/
       - run: ./scripts/desktop-smoke.ps1 -Directory dist
+      - name: Include instructions, notices and checksums
+        shell: pwsh
+        run: |
+          Copy-Item apps/windows-core-client/README.md dist/README.md
+          Copy-Item THIRD-PARTY-NOTICES.md dist/
+          Copy-Item third_party dist/third_party -Recurse
+          Get-ChildItem dist/*.exe | ForEach-Object { $hash = Get-FileHash $_.FullName -Algorithm SHA256; "$($hash.Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ConnectCore-Windows-x64

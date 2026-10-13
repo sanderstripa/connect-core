@@ -12,10 +12,83 @@ import (
 	"github.com/sanderstripa/connect-core/internal/lab"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestIPCChild(t *testing.T) {
+	if os.Getenv("CONNECT_DESKTOP_TEST_CHILD") != "1" {
+		return
+	}
+	os.Args = []string{"connect-desktop-core", "--ipc"}
+	main()
+	os.Exit(0)
+}
+
+func TestPrivateIPCImportCancelAndEOF(t *testing.T) {
+	dir := t.TempDir()
+	_, client, e := lab.Generate(dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cfg := ipvpn.Config{Version: 2, Environment: "isolated-lab", Endpoint: "127.0.0.1:9", Interface: "ccip0", DeviceIP: "10.231.0.2", Destinations: []string{"10.232.0.1/32"}, Trust: client}
+	raw, _ := json.Marshal(cfg)
+	path := filepath.Join(dir, "ip-client.json")
+	if e = os.WriteFile(path, raw, 0600); e != nil {
+		t.Fatal(e)
+	}
+	for _, ending := range []string{"eof", "unknown", "bad-frame"} {
+		t.Run(ending, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestIPCChild$")
+			cmd.Env = append(os.Environ(), "CONNECT_DESKTOP_TEST_CHILD=1", "LOCALAPPDATA="+t.TempDir())
+			stdin, _ := cmd.StdinPipe()
+			stdout, _ := cmd.StdoutPipe()
+			cmd.Stderr = io.Discard
+			if e := cmd.Start(); e != nil {
+				t.Fatal(e)
+			}
+			defer stdin.Close()
+			readState := func(want uint32) {
+				t.Helper()
+				for {
+					kind, p, e := desktop.Read(stdout)
+					if e != nil || kind != desktop.Status || len(p) != desktop.StatusSize {
+						t.Fatalf("invalid status: %v", e)
+					}
+					if binary.LittleEndian.Uint32(p) == want {
+						return
+					}
+				}
+			}
+			readState(desktop.Idle)
+			if e := desktop.Write(stdin, desktop.Import, []byte(path)); e != nil {
+				t.Fatal(e)
+			}
+			readState(desktop.Ready)
+			desktop.Write(stdin, desktop.Connect, nil)
+			readState(desktop.Connecting)
+			if ending == "unknown" {
+				desktop.Write(stdin, 99, nil)
+			} else if ending == "bad-frame" {
+				stdin.Write([]byte{'C', 'C', 2, 1, 0, 0, 0, 0})
+			} else {
+				desktop.Write(stdin, desktop.Disconnect, nil)
+				readState(desktop.Ready)
+				// EOF while a new connection is pending must cancel that attempt.
+				desktop.Write(stdin, desktop.Connect, nil)
+				readState(desktop.Connecting)
+				stdin.Close()
+			}
+			if e := cmd.Wait(); e != nil {
+				t.Fatalf("worker failed to terminate gracefully: %v", e)
+			}
+		})
+	}
+}
 
 type echoDevice struct{ *packetDevice }
 
