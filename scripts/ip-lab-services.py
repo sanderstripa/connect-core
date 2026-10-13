@@ -35,6 +35,14 @@ class TCP(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+class HTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer's default bind calls getfqdn(), which tries external reverse
+        # DNS. This fixture must start in a namespace without any DNS/default route.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "connect-ip-lab"
+        self.server_port = self.server_address[1]
+
 def udp_server(port):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind(("0.0.0.0", port))
@@ -52,7 +60,7 @@ def serve():
         threading.Thread(target=udp_server, args=(port,), daemon=True).start()
     tcp = TCP((HOST, 18083), Echo)
     threading.Thread(target=tcp.serve_forever, daemon=True).start()
-    http_server = http.server.ThreadingHTTPServer((HOST, 18080), HTTP)
+    http_server = HTTPServer((HOST, 18080), HTTP)
     print("lab services ready", flush=True)
     http_server.serve_forever()
 
