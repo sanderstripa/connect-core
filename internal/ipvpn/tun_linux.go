@@ -16,8 +16,7 @@ func Open(name string) (Device, error) {
 	if e != nil {
 		return nil, e
 	}
-	f := os.NewFile(uintptr(fd), "connect-ip-tun")
-	fail := func(e error) (Device, error) { _ = f.Close(); return nil, e }
+	fail := func(e error) (Device, error) { _ = unix.Close(fd); return nil, e }
 	req, e := unix.NewIfreq(name)
 	if e != nil {
 		return fail(e)
@@ -36,5 +35,7 @@ func Open(name string) (Device, error) {
 	if e = unix.IoctlIfreq(socket, unix.SIOCSIFMTU, req); e != nil {
 		return fail(e)
 	}
-	return f, nil
+	// Register with Go's poller only after TUNSETIFF: an unattached /dev/net/tun
+	// descriptor cannot yet be polled, causing os.NewFile to disable netpoll.
+	return os.NewFile(uintptr(fd), "connect-ip-tun"), nil
 }

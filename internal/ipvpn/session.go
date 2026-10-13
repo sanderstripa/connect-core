@@ -162,6 +162,7 @@ type peer struct {
 // Serve owns d and closes it on return. The shared TUN reader routes replies to
 // the certificate-bound address, with a bounded nonblocking queue per peer.
 func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]Policy, stats *Stats) error {
+	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var mu sync.Mutex
@@ -217,6 +218,9 @@ func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]
 	for {
 		c, e := l.Accept(ctx)
 		if e != nil {
+			if parent.Err() != nil {
+				return nil
+			}
 			select {
 			case re := <-readErr:
 				return fmt.Errorf("TUN read: %w", re)

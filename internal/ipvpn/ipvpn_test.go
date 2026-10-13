@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/lab"
 )
 
@@ -179,13 +180,16 @@ type fixture struct {
 	done    chan error
 }
 
-func setup(t testing.TB) fixture {
+func setup(t testing.TB, configure ...func(*Config)) fixture {
 	t.Helper()
 	s, c, e := lab.Generate(t.TempDir())
 	if e != nil {
 		t.Fatal(e)
 	}
 	cfg := Config{Version: 2, Environment: "isolated-lab", Endpoint: "127.0.0.1:17444", Interface: "ccip0", Clients: map[string]string{s.AllowedClients[0]: "10.231.0.2"}, Destinations: []string{"10.232.0.1/32"}, Trust: s}
+	for _, change := range configure {
+		change(&cfg)
+	}
 	policies, e := cfg.Validate(true)
 	if e != nil {
 		t.Fatal(e)
@@ -370,6 +374,126 @@ func TestQUICShutdownAndReconnect(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		}
+	}
+}
+
+func TestValidCertificateNotAllowlisted(t *testing.T) {
+	f := setup(t, func(c *Config) { c.Clients = map[string]string{strings.Repeat("0", 64): "10.231.0.2"} })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if c, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2")); e == nil {
+		c.CloseWithError(0, "test")
+		t.Fatal("valid CA certificate bypassed pin")
+	}
+}
+
+func TestMismatchedPrivateKey(t *testing.T) {
+	f := setup(t)
+	c := f.server
+	c.Trust.Key = filepath.Join(filepath.Dir(c.Trust.Key), "client.key")
+	if _, e := TLS(c, true); e == nil {
+		t.Fatal("mismatched key accepted")
+	}
+}
+
+func TestMalformedControlOverQUIC(t *testing.T) {
+	f := setup(t)
+	for _, payload := range [][]byte{[]byte("CIP9\x04\x4c\x00\x00\x00\x00\x00\x00"), []byte("CIP2\x04\x4c\x00\x01\x00\x00\x00\x00"), []byte("CIP2")} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, e := quic.DialAddr(ctx, f.address, f.tls, QUIC())
+		if e != nil {
+			cancel()
+			t.Fatal(e)
+		}
+		s, e := c.OpenStreamSync(ctx)
+		if e != nil {
+			cancel()
+			t.Fatal(e)
+		}
+		if _, e = s.Write(payload); e != nil {
+			cancel()
+			t.Fatal(e)
+		}
+		_ = s.Close()
+		select {
+		case <-c.Context().Done():
+		case <-ctx.Done():
+			t.Error("malformed session remained open")
+		}
+		_ = c.CloseWithError(0, "test")
+		cancel()
+	}
+	select {
+	case <-f.device.write:
+		t.Fatal("unauthorized TUN write")
+	default:
+	}
+}
+
+func TestTwoDeviceReplyIsolation(t *testing.T) {
+	_, second, e := lab.Generate(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	secondPair, e := tls.LoadX509KeyPair(second.Cert, second.Key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var secondTLS *tls.Config
+	f := setup(t, func(c *Config) {
+		original, e := os.ReadFile(c.Trust.CA)
+		if e != nil {
+			t.Fatal(e)
+		}
+		foreign, e := os.ReadFile(second.CA)
+		if e != nil {
+			t.Fatal(e)
+		}
+		combined := filepath.Join(t.TempDir(), "combined.pem")
+		if e = os.WriteFile(combined, append(original, foreign...), 0600); e != nil {
+			t.Fatal(e)
+		}
+		c.Trust.CA = combined
+		second.CA = combined
+		c.Clients[core.Fingerprint(secondPair.Certificate[0])] = "10.231.0.3"
+		secondTLS, e = TLS(Config{Trust: second}, false)
+		if e != nil {
+			t.Fatal(e)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	c1, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c1.CloseWithError(0, "test")
+	c2, e := Dial(ctx, f.address, secondTLS, netip.MustParseAddr("10.231.0.3"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c2.CloseWithError(0, "test")
+	p := udp("10.232.0.1", "10.231.0.3", []byte("second-device-only"))
+	f.device.read <- p
+	got, e := c2.ReceiveDatagram(ctx)
+	if e != nil || !bytes.Equal(got, p) {
+		t.Fatal("second-device reply", e)
+	}
+	probe, stop := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer stop()
+	if _, e = c1.ReceiveDatagram(probe); e == nil {
+		t.Fatal("reply leaked across devices")
+	}
+	// c1 cannot impersonate the other authenticated device.
+	if e = c1.SendDatagram(udp("10.231.0.3", "10.232.0.1", nil)); e != nil {
+		t.Fatal(e)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for f.stats.Dropped.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if f.stats.Dropped.Load() == 0 {
+		t.Fatal("cross-device spoof accepted")
 	}
 }
 func FuzzPacket(f *testing.F) {
