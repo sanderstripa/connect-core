@@ -163,6 +163,10 @@ type peer struct {
 // Serve owns d and closes it on return. The shared TUN reader routes replies to
 // the certificate-bound address, with a bounded nonblocking queue per peer.
 func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]Policy, stats *Stats) error {
+	return ServeControlled(ctx, l, d, NewControl(policies), stats)
+}
+
+func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *Control, stats *Stats) error {
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -247,7 +251,7 @@ func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]
 				return
 			}
 			pin := core.Fingerprint(c.ConnectionState().TLS.PeerCertificates[0].Raw)
-			policy, ok := policies[pin]
+			policy, ok := control.Policy(pin)
 			if !ok {
 				return
 			}
@@ -262,6 +266,10 @@ func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]
 				return
 			}
 			p := &peer{c, policy, make(chan []byte, 64)}
+			if !control.Admit(pin, func() { _ = c.CloseWithError(4, "access revoked") }) {
+				return
+			}
+			defer control.Release(pin)
 			mu.Lock()
 			if peers[policy.Device] != nil {
 				mu.Unlock()
@@ -287,7 +295,7 @@ func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]
 					case <-c.Context().Done():
 						return
 					case pkt := <-p.queue:
-						if c.SendDatagram(pkt) != nil {
+						if control.Transfer(pin, false, len(pkt), func() error { return c.SendDatagram(pkt) }) != nil {
 							_ = c.CloseWithError(1, "send failed")
 							return
 						}
@@ -304,10 +312,19 @@ func Serve(ctx context.Context, l *quic.Listener, d Device, policies map[string]
 					stats.Dropped.Add(1)
 					continue
 				}
-				writeMu.Lock()
-				n, e := d.Write(pkt)
-				writeMu.Unlock()
-				if e != nil || n != len(pkt) {
+				e = control.Transfer(pin, true, len(pkt), func() error {
+					writeMu.Lock()
+					defer writeMu.Unlock()
+					n, err := d.Write(pkt)
+					if err == nil && n != len(pkt) {
+						return io.ErrShortWrite
+					}
+					return err
+				})
+				if e != nil {
+					if _, allowed := control.Policy(pin); !allowed {
+						break
+					}
 					cancel()
 					break
 				}

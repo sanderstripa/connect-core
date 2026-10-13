@@ -19,6 +19,16 @@ native job uses a packet fixture as its server; Windows-VM-to-Linux-VM testing
 is a separate required gate. See [validation evidence](docs/VALIDATION.md).
 No real VPS was accessed. Amsterdam and the Danish services are untouched.
 
+## CONNECT UI
+
+The separate minimal local panel and protected CONNECT IP v2 control process are
+documented in [installation, security and compatibility](docs/CONNECT-UI.md).
+`connect-control` owns its real QUIC/TUN server, supports durable hot revocation,
+CSR proof enrollment of externally issued client certificates and real counters.
+`connect-ui` has scrypt passwords, sessions, CSRF and login rate limits; both
+administrative listeners are loopback-only. No data server starts automatically.
+See [validation and unavailable capabilities](docs/CONNECT-UI-VALIDATION.md).
+
 ## Legacy TCP lab (v1)
 
 ```text
@@ -92,7 +102,8 @@ The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/
 packets, QUIC datagrams, static device leases and private destination policy.
 SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
 route/DNS/firewall management, full-device kill switch, runtime adapters and
-administration UI are **not implemented**. Other applications' traffic outside
+public/remote administration are **not implemented**. Local CONNECT UI is available
+for the managed IP v2 path described above. Other applications' traffic outside
 the lab is not covered. Namespace leak tests do not prove system-wide Windows
 VPN leak safety. Dependencies/licenses and exact reuse are documented in
 [decisions](docs/DECISIONS.md) and [refreshed audit](docs/IMPLEMENTATION-AUDIT.md).
