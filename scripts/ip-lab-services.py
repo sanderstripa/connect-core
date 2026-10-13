@@ -52,9 +52,9 @@ def serve():
         threading.Thread(target=udp_server, args=(port,), daemon=True).start()
     tcp = TCP((HOST, 18083), Echo)
     threading.Thread(target=tcp.serve_forever, daemon=True).start()
-    http = http.server.ThreadingHTTPServer((HOST, 18080), HTTP)
+    http_server = http.server.ThreadingHTTPServer((HOST, 18080), HTTP)
     print("lab services ready", flush=True)
-    http.serve_forever()
+    http_server.serve_forever()
 
 def exchange(port, data, host=HOST):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:

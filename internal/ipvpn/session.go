@@ -43,6 +43,7 @@ func TLS(c Config, server bool) (*tls.Config, error) {
 }
 func QUIC() *quic.Config {
 	return &quic.Config{
+		Versions:        []quic.Version{quic.Version1},
 		EnableDatagrams: true, Allow0RTT: false, HandshakeIdleTimeout: 3 * time.Second, MaxIdleTimeout: 15 * time.Second, KeepAlivePeriod: 5 * time.Second,
 		MaxIncomingStreams: 1, MaxIncomingUniStreams: -1,
 		InitialStreamReceiveWindow: 4096, MaxStreamReceiveWindow: 4096, InitialConnectionReceiveWindow: 4096, MaxConnectionReceiveWindow: 4096,

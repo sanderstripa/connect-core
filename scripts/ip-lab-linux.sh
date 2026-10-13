@@ -13,7 +13,13 @@ prefix="ccip-$$"
 client="$prefix-c"; edge="$prefix-e"; service="$prefix-s"
 pids=(); namespaces=()
 cleanup() {
+  result=$?
   trap - EXIT INT TERM
+  if [[ $result != 0 ]]; then
+    for log in services server client capture; do
+      [[ ! -f $artifacts/$log.log ]] || cat "$artifacts/$log.log"
+    done
+  fi
   for ns in "${namespaces[@]}"; do
     # Namespace-owned children only; never search/kill host services.
     while read -r pid; do [[ -z $pid ]] || kill -TERM "$pid" 2>/dev/null || true; done < <(ip netns pids "$ns" 2>/dev/null)

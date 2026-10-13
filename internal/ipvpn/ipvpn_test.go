@@ -509,3 +509,48 @@ func BenchmarkPolicy(b *testing.B) {
 		}
 	}
 }
+
+// Actual encrypted loopback datagram round trips; excludes handshake/TUN and
+// counts one useful 1024-byte payload per echo, not Internet link throughput.
+func BenchmarkQUICDatagramEcho(b *testing.B) {
+	f := setup(b)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
+	if e != nil {
+		b.Fatal(e)
+	}
+	defer c.CloseWithError(0, "benchmark")
+	payload := bytes.Repeat([]byte{42}, 1024)
+	req := udp("10.231.0.2", "10.232.0.1", payload)
+	reply := udp("10.232.0.1", "10.231.0.2", payload)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-f.device.write:
+				select {
+				case f.device.read <- reply:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	defer func() { cancel(); <-done }()
+	b.SetBytes(1024)
+	for b.Loop() {
+		if e = c.SendDatagram(req); e != nil {
+			b.Fatal(e)
+		}
+		wait, stop := context.WithTimeout(ctx, 3*time.Second)
+		p, e := c.ReceiveDatagram(wait)
+		stop()
+		if e != nil || !bytes.Equal(p, reply) {
+			b.Fatal("echo", e)
+		}
+	}
+}
