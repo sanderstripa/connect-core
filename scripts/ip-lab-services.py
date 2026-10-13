@@ -70,10 +70,10 @@ def exchange(port, data, host=HOST):
         sock.sendto(data, (host, port))
         return sock.recv(4096)
 
-def tcp_echo(size):
+def tcp_echo(size, host=HOST, port=18083):
     data = bytes(range(256)) * (size // 256)
     start = time.perf_counter()
-    with socket.create_connection((HOST, 18083), timeout=10) as sock:
+    with socket.create_connection((host, port), timeout=10) as sock:
         # Read while sending. Writing a large payload before reading its echo
         # can deadlock when both peers' socket buffers fill.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -150,5 +150,20 @@ def denied():
         return
     raise AssertionError("destination policy bypass")
 
+def self_check():
+    # Real sockets, ephemeral loopback port; catches fixture deadlocks without
+    # creating TUN/routes or relying on any DNS/Internet/service ports.
+    with TCP(("127.0.0.1", 0), Echo) as server:
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            tcp_echo(1048576, "127.0.0.1", server.server_address[1])
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(lambda _: tcp_echo(65536, "127.0.0.1", server.server_address[1]), range(8)))
+        finally:
+            server.shutdown()
+            worker.join()
+    print("fixture binary TCP/duplex/half-close self-check passed", flush=True)
+
 if __name__ == "__main__":
-    {"serve": serve, "ready": ready, "check": check, "failure": failure, "denied": denied}[sys.argv[1]]()
+    {"serve": serve, "ready": ready, "check": check, "failure": failure, "denied": denied, "self-check": self_check}[sys.argv[1]]()

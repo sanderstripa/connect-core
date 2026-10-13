@@ -17,7 +17,7 @@ if ($labSignature.Status -ne 'Valid' -or $labSignature.SignerCertificate.Subject
 Copy-Item -LiteralPath $labDLL -Destination (Join-Path $labBin 'wintun.dll')
 Push-Location $labRoot
 try {
-    go test -c -o bin/ipvpn-native.test.exe ./internal/ipvpn
+    go test -race -c -o bin/ipvpn-native.test.exe ./internal/ipvpn
     if ($LASTEXITCODE -ne 0) { throw 'Native test build failed' }
     $env:CONNECT_IP_LAB_NATIVE_TEST = '1'
     & (Join-Path $labBin 'ipvpn-native.test.exe') '-test.v' '-test.run=^TestWindowsNativeTUNQUICDNS$' '-test.timeout=90s'

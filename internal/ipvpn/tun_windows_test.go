@@ -21,7 +21,7 @@ func TestWindowsNativeTUNQUICDNS(t *testing.T) {
 	}
 	t.Setenv("CONNECT_IP_LAB_VM", "1")
 	f := setup(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	c, e := Dial(ctx, f.address, f.tls, netip.MustParseAddr("10.231.0.2"))
 	if e != nil {
@@ -38,9 +38,11 @@ func TestWindowsNativeTUNQUICDNS(t *testing.T) {
 	defer func() {
 		_, _ = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cleanup).CombinedOutput()
 	}()
-	command := fmt.Sprintf(`$ErrorActionPreference='Stop'; $a=Get-NetAdapter -Name '%s'; New-NetIPAddress -InterfaceIndex $a.ifIndex -IPAddress '10.231.0.2' -PrefixLength 32 -PolicyStore ActiveStore | Out-Null; Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -NlMtuBytes 1100 -Dhcp Disabled; New-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix '10.232.0.1/32' -NextHop '0.0.0.0' -PolicyStore ActiveStore | Out-Null`, name)
+	command := fmt.Sprintf(`$ErrorActionPreference='Stop'; $a=Get-NetAdapter -Name '%s'; Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -NlMtuBytes 1100 -Dhcp Disabled -DadTransmits 0 -InterfaceMetric 5; New-NetIPAddress -InterfaceIndex $a.ifIndex -IPAddress '10.231.0.2' -PrefixLength 32 -PolicyStore ActiveStore | Out-Null; New-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix '10.232.0.1/32' -NextHop '0.0.0.0' -RouteMetric 5 -PolicyStore ActiveStore | Out-Null; for($i=0;$i -lt 100;$i++){ $ip=Get-NetIPAddress -InterfaceIndex $a.ifIndex -IPAddress '10.231.0.2'; if($ip.AddressState -eq 'Preferred'){break}; Start-Sleep -Milliseconds 50 }; Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 | Format-Table IPAddress,AddressState,SkipAsSource | Out-String | Write-Output; Get-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix '10.232.0.1/32' | Format-Table DestinationPrefix,NextHop,State | Out-String | Write-Output; if($ip.AddressState -ne 'Preferred'){throw 'New lab address is not ready'}`, name)
 	if out, e := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).CombinedOutput(); e != nil {
 		t.Fatalf("configure newly-created test adapter: %v\n%s", e, out)
+	} else {
+		t.Logf("new adapter configuration: %s", out)
 	}
 	done := make(chan error, 1)
 	stats := &Stats{}
@@ -86,7 +88,7 @@ func TestWindowsNativeTUNQUICDNS(t *testing.T) {
 		}
 	}()
 	defer func() { cancel(); <-answerDone }()
-	sock, e := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.ParseIP("10.232.0.1"), Port: 53})
+	sock, e := net.DialUDP("udp4", &net.UDPAddr{IP: net.ParseIP("10.231.0.2")}, &net.UDPAddr{IP: net.ParseIP("10.232.0.1"), Port: 53})
 	if e != nil {
 		t.Fatal(e)
 	}
