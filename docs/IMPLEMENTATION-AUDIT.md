@@ -11,7 +11,7 @@ independent cryptographic audit. Implementation decisions are in DECISIONS.md.
 | --- | --- |
 | XTLS/Xray-core | v26.10.10, 701af60772cda123492f86e383e1fdba066614a9 |
 | sanderstripa/connect | ae62014370ff92ea7fe789438bd7d3d0c1fac07e |
-| SUDOKU-ASCII/sudoku upstream main | 4889b53cb35355123bebd40e6c76a9582de7c23d |
+| SUDOKU-ASCII/sudoku upstream main and v0.5.1 | 4889b53cb35355123bebd40e6c76a9582de7c23d |
 | sanderstripa/sudoku-ui | 755d6822ac674b65789136e707ba7b222f0b5cc6 |
 | sanderstripa/mist, mist-hardening-32 | d4e7dacf22f9c3f4c5d762883544c102da0c6b49 |
 | sanderstripa/mist-ui | 13cfd64bde5e22e633c619731e43a1b3d62cec88 |
@@ -96,19 +96,27 @@ validate actual binaries and test generated configurations before rollout.
 
 ## Sudoku upstream versus the user's panel
 
-Current upstream main inspected here is still 4889b53; the user's panel workflow
-pins that same commit and applies
+The official latest [release v0.5.1](https://github.com/SUDOKU-ASCII/sudoku/releases/tag/v0.5.1)
+is published 2026-09-25T05:54:09Z, not a prerelease. Its tag resolves to the same
+4889b53 commit as inspected main; fetching the tag showed no source differences.
+The user's panel workflow pins that same commit and applies
 [access-control.patch](https://github.com/sanderstripa/sudoku-ui/blob/755d6822ac674b65789136e707ba7b222f0b5cc6/core-patches/access-control.patch).
 It adds policy/session accounting and a local Unix API. The panel does not invent
-an independent cryptographic protocol. CONNECT.'s desktop depends on v0.5.1;
-these source identities must be kept separate and interop verified.
+an independent cryptographic protocol. CONNECT.'s desktop depends on v0.5.1,
+so upstream base is aligned; the panel's additional patch still requires interop
+and access-policy validation against the actual bundled executable.
 
 [session_keys.go](https://github.com/SUDOKU-ASCII/sudoku/blob/4889b53cb35355123bebd40e6c76a9582de7c23d/internal/tunnel/session_keys.go),
 [handshake_kip.go](https://github.com/SUDOKU-ASCII/sudoku/blob/4889b53cb35355123bebd40e6c76a9582de7c23d/internal/tunnel/handshake_kip.go),
 [server.go](https://github.com/SUDOKU-ASCII/sudoku/blob/4889b53cb35355123bebd40e6c76a9582de7c23d/internal/tunnel/server.go)
 and early.go show PSK-authenticated record setup, ephemeral X25519, HKDF-SHA256
 separate directional keys, timestamp/nonce replay checks, and a distinct early
-handshake path. AEAD configuration and table transformation are separate layers.
+handshake path. The [AEAD record layer](https://github.com/SUDOKU-ASCII/sudoku/blob/4889b53cb35355123bebd40e6c76a9582de7c23d/pkg/crypto/record_conn.go)
+implements AES-GCM/ChaCha20-Poly1305, epoch+sequence nonce/AAD and strict in-session
+sequence checking, with per-epoch HMAC-SHA256 derivation and a default 32MiB
+key-update threshold. It also supports a `none` configuration, which is not
+authenticated encryption. Session key derivation and record-layer composition
+must be assessed together. AEAD configuration and table transformation are separate layers.
 Tables, padding, HTTP mask and pure/packed downlink are appearance/performance
 controls with expansion/CPU costs. No independent security proof is inferred
 from combining them with standard primitives.

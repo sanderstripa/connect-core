@@ -7,6 +7,10 @@ cryptographic foundation, not its entire application protocol.
 
 ## Selected architecture
 
+Transport rationale follows [QUIC DATAGRAM RFC 9221](https://www.rfc-editor.org/rfc/rfc9221.html)
+and [TLS for QUIC RFC 9001](https://www.rfc-editor.org/rfc/rfc9001.html): reliable
+control and unreliable packet delivery share authentication/packet protection.
+
 | Decision | Why / cost / boundary |
 | --- | --- |
 | QUIC DATAGRAM + reliable control stream | IP packets retain unreliable delivery; avoids TCP-over-TCP retransmission and stream head-of-line blocking. Shared congestion control still couples flows. UDP-blocked paths fail; no automatic TCP fallback. |

@@ -81,6 +81,7 @@ $env:CONNECT_IP_LAB_VM='1'
 ```powershell
 $labInterface = Get-NetAdapter -Name ccip0
 New-NetIPAddress -InterfaceIndex $labInterface.ifIndex -IPAddress 10.231.0.2 -PrefixLength 32
+Set-NetIPInterface -InterfaceIndex $labInterface.ifIndex -AddressFamily IPv4 -NlMtuBytes 1100 -Dhcp Disabled
 New-NetRoute -InterfaceIndex $labInterface.ifIndex -DestinationPrefix '10.232.0.1/32' -NextHop 0.0.0.0
 ```
 
