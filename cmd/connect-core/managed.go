@@ -60,7 +60,7 @@ func runManaged(path string, ipc bool) error {
 				}
 				dec := json.NewDecoder(strings.NewReader(s.Text()))
 				dec.DisallowUnknownFields()
-			if dec.Decode(&command) != nil || command.Version != 1 || dec.Decode(new(any)) != io.EOF {
+				if dec.Decode(&command) != nil || command.Version != 1 || dec.Decode(new(any)) != io.EOF {
 					commands <- errors.New("invalid IPC command")
 					cancel()
 					return

@@ -24,8 +24,8 @@ docker cp "$root/scripts/vm-linux-init.sh" "$container:/init"
 mkdir -p "$out/rootfs"
 docker export "$container" | tar -xf - -C "$out/rootfs"
 chmod +x "$out/rootfs/init" "$out/rootfs/connect-core"
-sudo mknod -m 600 "$out/rootfs/dev/console" c 5 1
-sudo mknod -m 666 "$out/rootfs/dev/null" c 1 3
+if [[ ! -e $out/rootfs/dev/console ]]; then sudo mknod -m 600 "$out/rootfs/dev/console" c 5 1; fi
+if [[ ! -e $out/rootfs/dev/null ]]; then sudo mknod -m 666 "$out/rootfs/dev/null" c 1 3; fi
 (cd "$out/rootfs" && find . -print0 | cpio --null -o --format=newc | gzip -1) > "$out/rootfs.cpio.gz"
 # The boot image holds only disposable 24h lab credentials; never upload it as a
 # product/release. CI's ephemeral provisioning artifact has one-day retention.

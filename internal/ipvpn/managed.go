@@ -118,6 +118,10 @@ func Managed(ctx context.Context, cfg Config, t *tls.Config, open func(string) (
 	emit("authenticating")
 	c, e := Dial(ctx, cfg.Endpoint, t, policies[""].Device)
 	if e != nil {
+		if ctx.Err() != nil {
+			emit("stopped")
+			return nil
+		}
 		emit("failed")
 		return e
 	}
@@ -132,8 +136,9 @@ func Managed(ctx context.Context, cfg Config, t *tls.Config, open func(string) (
 	stop := context.AfterFunc(ctx, func() { _ = d.Close() })
 	defer stop()
 	for {
+		view := h.session()
 		emit("ready")
-		e = Client(ctx, c, h.session(), policies[""], stats)
+		e = Client(ctx, c, view, policies[""], stats)
 		if ctx.Err() != nil {
 			emit("stopped")
 			return nil

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"
@@ -123,11 +122,11 @@ func runIP(mode, path string) error {
 	stats := &ipvpn.Stats{}
 	defer func() { b, _ := json.Marshal(stats.Snapshot()); fmt.Printf("CONNECT IP stats %s\n", b) }()
 	if server {
-		l, e := quic.ListenAddr(cfg.Endpoint, t, ipvpn.QUIC())
+		l, closeListener, e := ipvpn.Listen(cfg.Endpoint, t)
 		if e != nil {
 			return e
 		}
-		defer l.Close()
+		defer closeListener()
 		d, e := ipvpn.Open(cfg.Interface)
 		if e != nil {
 			return e
