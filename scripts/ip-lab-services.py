@@ -74,13 +74,20 @@ def tcp_echo(size):
     data = bytes(range(256)) * (size // 256)
     start = time.perf_counter()
     with socket.create_connection((HOST, 18083), timeout=10) as sock:
-        # Avoid simultaneous large blocking send/echo writes.
-        sock.sendall(data)
-        out = bytearray()
-        while len(out) < len(data):
-            chunk = sock.recv(65536)
-            assert chunk, "premature TCP EOF"
-            out.extend(chunk)
+        # Read while sending. Writing a large payload before reading its echo
+        # can deadlock when both peers' socket buffers fill.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            sender = pool.submit(sock.sendall, data)
+            try:
+                out = bytearray()
+                while len(out) < len(data):
+                    chunk = sock.recv(65536)
+                    assert chunk, "premature TCP EOF"
+                    out.extend(chunk)
+                sender.result(timeout=10)
+            except BaseException:
+                sock.close()  # Unblock sender before the executor joins it.
+                raise
         sock.shutdown(socket.SHUT_WR)
         assert sock.recv(1) == b"", "half-close did not finish"
     assert hashlib.sha256(out).digest() == hashlib.sha256(data).digest()

@@ -20,7 +20,7 @@ try {
     go test -c -o bin/ipvpn-native.test.exe ./internal/ipvpn
     if ($LASTEXITCODE -ne 0) { throw 'Native test build failed' }
     $env:CONNECT_IP_LAB_NATIVE_TEST = '1'
-    & (Join-Path $labBin 'ipvpn-native.test.exe') -test.v -test.run '^TestWindowsNativeTUNQUICDNS$'
+    & (Join-Path $labBin 'ipvpn-native.test.exe') '-test.v' '-test.run=^TestWindowsNativeTUNQUICDNS$' '-test.timeout=90s'
     if ($LASTEXITCODE -ne 0) { throw 'Native Windows TUN/DNS test failed' }
 } finally {
     Remove-Item Env:CONNECT_IP_LAB_NATIVE_TEST -ErrorAction SilentlyContinue
