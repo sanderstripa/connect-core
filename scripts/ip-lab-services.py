@@ -51,8 +51,31 @@ def udp_server(port):
             if port == 53:
                 if len(data) < 17:
                     continue
-                # One fixed authoritative A answer; explicitly not a resolver.
-                data = data[:2] + struct.pack("!HHHHH", 0x8180, 1, 1, 0, 0) + data[12:] + b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + socket.inet_aton(HOST)
+                # Parse exactly one bounded question, ignoring EDNS/additional
+                # records rather than accidentally placing them before the answer.
+                if struct.unpack("!H", data[4:6])[0] != 1:
+                    continue
+                pos, labels = 12, []
+                while pos < len(data) and data[pos] != 0:
+                    size = data[pos]
+                    if size > 63 or pos + 1 + size >= len(data):
+                        break
+                    labels.append(data[pos+1:pos+1+size].lower())
+                    pos += 1 + size
+                else:
+                    if pos + 5 <= len(data):
+                        end = pos + 5
+                        kind, cls = struct.unpack("!HH", data[pos+1:end])
+                        question = data[12:end]
+                        allowed = labels and labels[-1] == b"test" and cls == 1
+                        answer = b""
+                        if allowed and kind == 1:
+                            answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + socket.inet_aton(HOST)
+                        flags = 0x8180 if allowed else 0x8183
+                        data = data[:2] + struct.pack("!HHHHH", flags, 1, int(bool(answer)), 0, 0) + question + answer
+                        sock.sendto(data, addr)
+                    continue
+                continue
             sock.sendto(data, addr)
 
 def serve():
@@ -105,13 +128,18 @@ def check():
     query = b"\x12\x34" + struct.pack("!HHHHH", 0x0100, 1, 0, 0, 0) + b"\x07example\x04test\x00\x00\x01\x00\x01"
     answer = exchange(53, query)
     assert answer[:2] == query[:2] and answer[-4:] == socket.inet_aton(HOST)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        durations = list(pool.map(tcp_echo, [65536] * 8))
+    connection_results = {}
+    for count in (1, 8, 32):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
+            durations = list(pool.map(tcp_echo, [16384] * count))
+            echoes = list(pool.map(lambda n: exchange(18082, CANARY + bytes([n])), range(count)))
+        assert echoes == [CANARY + bytes([n]) for n in range(count)]
+        connection_results[str(count)] = {"tcp": "pass", "udp": "pass", "tcp_seconds_max": max(durations)}
     # Separate sequential measurement: useful one-way payload, includes connect,
     # echo and teardown. It is not a one-way link throughput benchmark.
     elapsed = tcp_echo(1048576)
     samples.sort()
-    print(json.dumps({"http": "pass", "udp_100": "pass", "dns": "pass", "tcp_binary_8": "pass", "tcp_half_close": "pass", "udp_rtt_ms": {"p50": statistics.median(samples), "p95": samples[94], "p99": samples[98]}, "tcp_1MiB_echo_seconds": elapsed, "tcp_useful_MiB_per_second": 1 / elapsed, "concurrent_tcp_seconds_max": max(durations)}, indent=2), flush=True)
+    print(json.dumps({"http": "pass", "udp_100": "pass", "dns": "pass", "connections": connection_results, "tcp_half_close": "pass", "udp_rtt_ms": {"p50": statistics.median(samples), "p95": samples[94], "p99": samples[98]}, "tcp_1MiB_echo_seconds": elapsed, "tcp_useful_MiB_per_second": 1 / elapsed}, indent=2), flush=True)
 
 def ready():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

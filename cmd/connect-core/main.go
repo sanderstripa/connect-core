@@ -29,6 +29,9 @@ func run() error {
 		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
+	if mode == "ip-client-managed" || mode == "ip-client-reconnect" {
+		return runManaged(path, mode == "ip-client-managed")
+	}
 	if mode == "init-lab" {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			return fmt.Errorf("choose a new lab directory")

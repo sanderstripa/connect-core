@@ -1,0 +1,53 @@
+name: isolated-windows-linux-vm-pair
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.0'
+      - run: sudo apt-get update && sudo apt-get install -y cpio
+      - run: bash scripts/vm-linux-build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-linux-boot
+          retention-days: 1
+          path: |
+            vm-boot/vmlinuz
+            vm-boot/rootfs.cpio.gz
+            vm-boot/boot-sha256.txt
+            vm-boot/lab/
+  vm-pair:
+    needs: linux-image
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-linux-boot
+          path: vm-boot/
+      - run: ./scripts/vm-pair-windows-ci.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-linux-vm-results
+          path: |
+            vm-pair-artifacts/*-resources.json
+            vm-pair-artifacts/*measurements.json
+            vm-pair-artifacts/network-journal.json
+            vm-pair-artifacts/capture-verification.json
+            vm-pair-artifacts/*.log
+            vm-pair-artifacts/*.pcap
+            vm-pair-artifacts/*.pcapng
+            vm-pair-artifacts/*.etl
