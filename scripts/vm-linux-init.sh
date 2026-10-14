@@ -53,7 +53,7 @@ table inet connect_lab {
 EOF
 ip netns exec service python3 /services.py serve >/artifacts/services.log 2>&1 &
 ip netns exec service python3 /services.py ready
-ip netns exec edge tcpdump -U -n -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
+ip netns exec edge tcpdump -U -n -s 160 -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
 capture=$!
 start_server(){
  echo LAB_SERVER_STARTING
@@ -77,7 +77,7 @@ while read -r command; do
  case "$command" in
   stop-server) kill -KILL "$server"; wait "$server" 2>/dev/null || true; echo LAB_SERVER_STOPPED ;;
   start-server) start_server ;;
-  diagnostics) cat /artifacts/server.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
+  diagnostics) cat /artifacts/server.log; cat /artifacts/services.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys
 p=pathlib.Path('/proc')/sys.argv[1]

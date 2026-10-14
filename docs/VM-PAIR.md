@@ -86,7 +86,11 @@ Resource artifacts distinguish Windows Core CPU/RAM from Linux Core CPU/RAM.
 QEMU emulation overhead means these numbers cannot rank Xray, Sudoku or MIST.
 
 Linux underlay PCAP is automatically checked for endpoint-only encrypted traffic
-and absence of the DNS question/plaintext canary. Windows PktMon ETL/PCAPNG is
+and absence of the DNS question/plaintext canary in captured 160-byte packet
+snapshots. This covers headers and the known UDP/DNS fixture payload prefix;
+it is not a byte-for-byte capture of every encrypted payload. The snapshot bound
+keeps UART evidence transfer practical under software emulation.
+Windows PktMon ETL/PCAPNG is
 collected separately. A timed-out probe alone is not proof of no transmitted
 packet. Do not claim complete Windows leakage validation merely from its capture
 being present: inspect the capture and state which interfaces were covered.

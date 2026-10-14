@@ -69,11 +69,14 @@ try{
  $vm.writer=[IO.StreamWriter]::new($serialPeer.GetStream(),[Text.UTF8Encoding]::new($false));$vm.writer.AutoFlush=$true;$vm.writer.NewLine="`n"
  $vm.pending=$vm.reader.ReadLineAsync()
  Await-Line $vm '^LAB_SERVER_READY$' 180
+ Write-Output 'LAB_LINUX_VM_READY'
  $vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 15
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
  $client=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$profile)
  Await-Line $client '"state":"ready"' 30
+ Write-Output 'LAB_WINDOWS_AUTHENTICATED_TUN_READY'
  & "$PSScriptRoot/lab-network-windows.ps1" -Action apply -Journal $journal -Config $profile
+ Write-Output 'LAB_WINDOWS_NETWORK_ACTIVE'
  # Record Windows packets as an additional artifact; Linux PCAP is analyzed.
  pktmon list | Set-Content (Join-Path $out 'windows-components.log')
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
@@ -82,6 +85,7 @@ try{
  $startCpu=$client.process.TotalProcessorTime.TotalSeconds;$watch=[Diagnostics.Stopwatch]::StartNew()
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'measurements.json')
  if($LASTEXITCODE -ne 0){throw 'Cross-VM HTTP/TCP/UDP/DNS checks failed'}
+ Write-Output 'LAB_HTTP_TCP_UDP_DNS_1_8_32_PASSED'
  python -c "import socket,time; n='probe'+str(time.time_ns())+'.test'; r=socket.getaddrinfo(n,80,socket.AF_INET); assert r and all(x[4][0]=='10.232.0.1' for x in r); print('Windows system resolver through Linux DNS passed')"
  if($LASTEXITCODE -ne 0){throw 'System DNS failed'}
  # Wrong name must fail before creating another interface; no weakened trust.
@@ -97,6 +101,7 @@ try{
  $badProcess=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$badPath)
  if(-not $badProcess.process.WaitForExit(15000) -or $badProcess.process.ExitCode -eq 0){throw 'Foreign client certificate was accepted'}
  if(Get-NetAdapter -Name 'ccipbad' -ErrorAction SilentlyContinue){throw 'Foreign identity created an interface'}
+ Write-Output 'LAB_WRONG_SERVER_AND_CLIENT_IDENTITIES_DENIED'
  python -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); [s.sendto(b'CONNECT-invalid-'+bytes([i]),('127.0.0.1',17444)) for i in range(100)]; s.close()"
  if($LASTEXITCODE -ne 0){throw 'Malformed underlay probe failed'}
  # Authenticated client retains TUN/routes/firewall during loss and reconnect.
@@ -111,6 +116,7 @@ try{
  Await-Line $client '"state":"ready"' 35
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'recovery-measurements.json')
  if($LASTEXITCODE -ne 0){throw 'Recovery failed'}
+ Write-Output 'LAB_SERVER_STOP_RESTART_RECOVERY_PASSED'
  python "$PSScriptRoot/vm-negative-probes.py"
  if($LASTEXITCODE -ne 0){throw 'IPv4/IPv6/DNS guard failed'}
  $client.process.Refresh();$watch.Stop()
@@ -123,6 +129,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Core crash leaked'}
  python "$PSScriptRoot/vm-negative-probes.py"
  if($LASTEXITCODE -ne 0){throw 'Crash guard failed'}
+ Write-Output 'LAB_CORE_CRASH_GUARD_PASSED'
  Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
  $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
  [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
@@ -134,7 +141,7 @@ try{
   if($vm -and -not $vm.process.HasExited -and -not (Test-Path (Join-Path $out 'linux-underlay.pcap'))){
    try{
     Clear-Lines $vm;$vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 10
-    Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 30
+    Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
     $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
     [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
    }catch{Write-Warning ('Failure capture unavailable: '+$_.Exception.Message)}

@@ -16,4 +16,4 @@ while offset<len(data):
 assert counts['endpoint_udp']>0
 assert b'CONNECT-IP-LAB-PRIVATE-CANARY-2026' not in data
 assert b'\x07example\x04test' not in data
-print(json.dumps({'frames':sum(counts.values()),'types':dict(counts),'plaintext_canary':False,'plaintext_dns_question':False},indent=2))
+print(json.dumps({'frames':sum(counts.values()),'types':dict(counts),'snapshot_bytes':struct.unpack(order+'I',data[16:20])[0],'plaintext_canary_in_snapshot':False,'plaintext_dns_question_in_snapshot':False},indent=2))

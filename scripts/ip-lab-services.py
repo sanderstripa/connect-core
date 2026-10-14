@@ -34,6 +34,7 @@ class Echo(socketserver.BaseRequestHandler):
 class TCP(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 128  # Python <=3.14 defaults to 5; the lab tests 32 peers.
 
 class HTTPServer(http.server.ThreadingHTTPServer):
     def server_bind(self):
@@ -130,6 +131,7 @@ def check():
     assert answer[:2] == query[:2] and answer[-4:] == socket.inet_aton(HOST)
     connection_results = {}
     for count in (1, 8, 32):
+        print(f"checking {count} concurrent TCP/UDP connections", file=sys.stderr, flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
             durations = list(pool.map(tcp_echo, [16384] * count))
             echoes = list(pool.map(lambda n: exchange(18082, CANARY + bytes([n])), range(count)))
