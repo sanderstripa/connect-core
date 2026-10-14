@@ -38,9 +38,16 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
     # A real neighboring service + firewall chain survive installation/uninstall.
     neighbor = subprocess.Popen([sys.executable,'-m','http.server','17889','--bind','127.0.0.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run('iptables','-N','CONNECT_NEIGHBOR_FIXTURE');run('iptables','-A','CONNECT_NEIGHBOR_FIXTURE','-j','RETURN')
-    run('ip','addr','add','198.18.0.1/32','dev','lo')
+    # A separate service namespace proves actual forwarding and masquerade,
+    # instead of merely injecting a packet into a host-local UDP socket.
+    run('ip','netns','add','connect-install-fixture')
+    run('ip','link','add','cc-eg0','type','veth','peer','name','cc-es0','netns','connect-install-fixture')
+    run('ip','addr','add','198.18.0.2/24','dev','cc-eg0');run('ip','link','set','cc-eg0','up')
+    run('ip','-n','connect-install-fixture','addr','add','198.18.0.1/24','dev','cc-es0');run('ip','-n','connect-install-fixture','link','set','cc-es0','up');run('ip','-n','connect-install-fixture','link','set','lo','up')
+    echo=subprocess.Popen(['ip','netns','exec','connect-install-fixture',str(root/'bin'/'connect-vps-probe'),'serve'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+    assert echo.stdout.readline().strip()=='ready', 'UDP service fixture not ready'
     before_firewall=network.firewall();before_routes=network.routes();before_global=pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()
-    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--source',str(root),'--endpoint','127.0.0.1:17444','--password-file',str(secret),'--yes']
+    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--source',str(root),'--endpoint','127.0.0.1:17444','--uplink','cc-eg0','--password-file',str(secret),'--yes']
     importer = None
     try:
         # Occupied-port check rejects before accounts/services/interfaces are created.
@@ -109,4 +116,4 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         if (installer.JOURNAL/'manifest.json').exists():
             installer.rollback_install(json.loads((installer.JOURNAL/'manifest.json').read_text()))
         neighbor.terminate();neighbor.wait();run('iptables','-F','CONNECT_NEIGHBOR_FIXTURE');run('iptables','-X','CONNECT_NEIGHBOR_FIXTURE')
-        run('ip','addr','del','198.18.0.1/32','dev','lo')
+        echo.terminate();echo.wait();run('ip','link','delete','cc-eg0');run('ip','netns','del','connect-install-fixture')

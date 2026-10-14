@@ -122,9 +122,10 @@ def build(args, stage):
 
 def unit_files():
     hardening = 'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nUMask=0077\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n'
+    core_hardening = hardening.replace('AF_INET AF_INET6 AF_UNIX', 'AF_INET AF_INET6 AF_UNIX AF_NETLINK')
     return {
         'connect-core-network.service': '[Unit]\nDescription=CONNECT owned TUN and scoped rules\nAfter=network-online.target\nWants=network-online.target\nBefore=connect-core.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/python3 /opt/connect-core/current/scripts/connect-vps-network.py apply /var/lib/connect-core-installer/network.json\nExecStop=/usr/bin/python3 /opt/connect-core/current/scripts/connect-vps-network.py rollback /var/lib/connect-core-installer/network.json\n\n[Install]\nWantedBy=multi-user.target\n',
-        'connect-core.service': '[Unit]\nDescription=CONNECT Core control and IP v2 server\nRequires=connect-core-network.service\nAfter=connect-core-network.service\n\n[Service]\nUser=connectcore\nSupplementaryGroups=connectadmin\nExecStart=/opt/connect-core/current/bin/connect-control serve /var/lib/connect-core/control/control.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=20\n' + hardening + 'ReadWritePaths=/var/lib/connect-core/control\nCapabilityBoundingSet=\nDevicePolicy=closed\nDeviceAllow=/dev/net/tun rw\n\n[Install]\nWantedBy=multi-user.target\n',
+        'connect-core.service': '[Unit]\nDescription=CONNECT Core control and IP v2 server\nRequires=connect-core-network.service\nAfter=connect-core-network.service\n\n[Service]\nUser=connectcore\nSupplementaryGroups=connectadmin\nExecStart=/opt/connect-core/current/bin/connect-control serve /var/lib/connect-core/control/control.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=20\n' + core_hardening + 'ReadWritePaths=/var/lib/connect-core/control\nCapabilityBoundingSet=\nDevicePolicy=closed\nDeviceAllow=/dev/net/tun rw\n\n[Install]\nWantedBy=multi-user.target\n',
         'connect-ui.service': '[Unit]\nDescription=CONNECT UI local panel\nAfter=connect-core.service\n\n[Service]\nUser=connectui\nSupplementaryGroups=connectadmin\nExecStart=/opt/connect-core/current/bin/connect-ui serve /etc/connect-core/ui.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=20\n' + hardening + 'CapabilityBoundingSet=\n\n[Install]\nWantedBy=multi-user.target\n',
     }
 
@@ -280,6 +281,10 @@ def main():
         if a.action == 'install':
             if not a.endpoint: raise RuntimeError('--endpoint ASSIGNED_IPV4:UDP_PORT is required')
             ensure_fresh()
+            endpoint_port = int(a.endpoint.rsplit(':', 1)[1])
+            ports = {endpoint_port: socket.SOCK_DGRAM, a.panel_port: socket.SOCK_STREAM, a.control_port: socket.SOCK_STREAM, a.enrollment_port: socket.SOCK_STREAM}
+            if len(ports) != 4: raise RuntimeError('CONNECT ports must be distinct')
+            check_ports(ports)
         else:
             m = json.loads((JOURNAL / 'manifest.json').read_text()); verify_owned(m)
             if a.action == 'status': print(json.dumps({k:v for k,v in m.items() if k in ['schema','revision','previous_revision','panel_port','installed']}, indent=2)); return
