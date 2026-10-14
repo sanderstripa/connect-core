@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
+	"github.com/sanderstripa/connect-core/internal/onboarding"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +29,7 @@ type Invitation struct {
 	URL   string
 	Pin   string
 	Token string
+	Panel *onboarding.Link
 }
 type Request struct {
 	Token string `json:"token"`
@@ -53,6 +55,17 @@ func Parse(s string) (Invitation, error) {
 		return i, errors.New("invalid CONNECT invitation")
 	}
 	q, e := url.ParseQuery(u.RawQuery)
+	if e == nil && len(q) == 4 {
+		l, err := onboarding.Parse(s)
+		if err != nil {
+			return i, err
+		}
+		cert, err := x509.ParseCertificate(l.Certificate)
+		if err != nil {
+			return i, err
+		}
+		return Invitation{URL: l.URL + "/result", Pin: SPKI(cert), Token: l.Token, Panel: &l}, nil
+	}
 	if e != nil || len(q) != 3 || len(q["v"]) != 1 || len(q["url"]) != 1 || len(q["pin"]) != 1 || q.Get("v") != "1" || !hex32(q.Get("pin")) || !hex32(u.Fragment) {
 		return i, errors.New("invalid invitation fields")
 	}
@@ -63,6 +76,15 @@ func Parse(s string) (Invitation, error) {
 	return Invitation{URL: ep.String(), Pin: q.Get("pin"), Token: u.Fragment}, nil
 }
 func Link(i Invitation) (string, error) {
+	if i.Panel != nil {
+		cert, err := x509.ParseCertificate(i.Panel.Certificate)
+		if err != nil || i.URL != i.Panel.URL+"/result" || i.Token != i.Panel.Token || i.Pin != SPKI(cert) {
+			return "", errors.New("inconsistent panel invitation")
+		}
+		s := i.Panel.String()
+		_, err = onboarding.Parse(s)
+		return s, err
+	}
 	q := url.Values{"v": {"1"}, "url": {i.URL}, "pin": {i.Pin}}
 	s := "connect://enroll?" + q.Encode() + "#" + i.Token
 	_, e := Parse(s)
@@ -97,6 +119,9 @@ func Redeem(ctx context.Context, i Invitation, csr string) (Response, error) {
 	}
 	if len(csr) > 8192 {
 		return reply, errors.New("enrollment CSR too large")
+	}
+	if i.Panel != nil {
+		return redeemPanel(ctx, *i.Panel, csr)
 	}
 	ep, _ := url.Parse(i.URL)
 	// Invitation SPKI is an explicit out-of-band trust anchor, including lab CAs.

@@ -27,27 +27,17 @@ The configuration button accepts the current CONNECT IP v2 client JSON, a `conne
 
 Credentials are stored as a self-contained current-user Windows DPAPI bundle in `%LOCALAPPDATA%/ConnectCoreLab/profile.dpapi`. Its directory has a protected user-only DACL. The original imported files are unchanged; protect those copies yourself. Diagnostics never contain raw keys, invitation tokens, configurations or packet contents.
 
-Enrollment links contain a five-minute one-use random token, an HTTPS endpoint and its SHA256 public-key pin. They contain no device private key. The client generates an Ed25519 key locally, saves a DPAPI-protected pending key before contacting the service, and sends only its signed CSR. The enrollment service consumes the invitation durably before issuing a certificate. The returned certificate is checked against the locally generated key and trusted CA before saving the final profile. A lost reply or failed issuance requires a new invitation; replay never issues a second certificate. Treat the invitation itself as temporary access authority and share it privately.
+Invitations from the current CONNECT UI 0.2 panel contain a 15-minute one-use enrollment token, an HTTPS origin and its public certificate. They contain no device private key. The Windows worker generates an Ed25519 key locally and stores its key and signed CSR as a DPAPI-protected pending record before contacting the service. Only the signed CSR is submitted. The window displays both halves of the complete SHA256 public-key fingerprint, which can also be copied through safe diagnostics. Compare it with the panel before the administrator approves the device.
 
-F9 or `ConnectCore.exe --register-protocol` registers this executable for `connect://` under the current user. An association belonging to another CONNECT application is refused rather than overwritten. Opening a link requires confirmation in the client. `--import <URI>` forwards to the existing client instance when one is already open.
+The panel binds the invitation to exactly one proof/key. Approval issues one certificate; retries with the same proof retrieve the same result rather than create another device or certificate. A different key cannot reuse the token. If the window closes before approval or a response is lost, reopen the same invitation: the client resumes its protected pending identity. On success it checks the certificate against the local key and trusted CA, writes the final DPAPI profile and removes the pending record. TLS 1.3, hostname/lifetime validation and the public certificate carried by the invitation are required; proxies and redirects are forbidden. The earlier experimental five-minute SPKI invitation format remains accepted for compatibility.
 
-## Enrollment service and existing panel
+F9 or `ConnectCore.exe --register-protocol` registers this executable for `connect://` under the current user. An association belonging to another CONNECT application is refused rather than overwritten. Opening a link requires confirmation in the client. `--import <URI>` forwards to the existing client instance when one is already open. Treat an invitation as temporary access authority and share it privately.
 
-The existing `connect-ui` panel is integrated with `connect-control`; its authenticated invitation action offers copying a link and saving its actual QR PNG. Automatic issuance is opt-in. The operator must supply a PKCS8 CA signing key matching the configured trusted CA and an HTTPS server certificate matching the enrollment URL. The signing key stays on the server and is never exported to the browser or device.
+## Existing panel and configuration compatibility
 
-Optional control configuration fields are:
+The branch integrates the actual CONNECT UI 0.2 broker and approval flow. Use the panel's existing invitation and registration actions; the desktop client does not substitute a second browser access service. Its server-side CA signer remains on the server and never goes to the browser or device. Follow [CONNECT-UI.md](../../docs/CONNECT-UI.md) and [VPS-INSTALL.md](../../docs/VPS-INSTALL.md) for the panel's existing operator configuration. No running VPS is modified by the desktop implementation.
 
-```json
-{
-  "issuer_key": "/protected/issuer.key",
-  "enrollment_listen": "127.0.0.1:18443",
-  "enrollment_url": "https://localhost:18443/enroll",
-  "enrollment_tls_cert": "/protected/server.pem",
-  "enrollment_tls_key": "/protected/server.key"
-}
-```
-
-These extend the normal control configuration; they are not a complete replacement. Protect CA and TLS keys with service-account-only file permissions. The enrollment endpoint is separate from the authenticated administration listener. TLS 1.3, the exact hostname, certificate lifetime and the invitation public-key pin are required; redirects and proxy fallback are forbidden. Existing `init-lab` intentionally discards the CA signing key. For a new disposable enrollment laboratory use `connect-core init-enrollment-lab <new-directory>`, which explicitly retains `issuer.key`. Do not regenerate or replace an existing installation's CA.
+Current v2 profiles with `environment: managed-vps` and their `device_network` are recognized, in addition to isolated laboratory profiles. A panel export intentionally has no Windows-local DNS setting. Before its first system connection, a compact native dialog asks for a numeric IPv4 DNS server reachable through that VPN. There is no guessed DNS or direct resolver fallback. The confirmed local `network` policy is saved with the protected profile. The UI remains explicitly labeled for isolated system VPN trials until native network validation is complete.
 
 ## Packet laboratory and system VPN
 
@@ -60,7 +50,7 @@ System mode requires the explicit optional v2 policy:
 "network": {"mode": "system-vpn", "dns": "10.232.0.1"}
 ```
 
-Use a numeric IPv4 Core endpoint, a valid private device address and a numeric unicast tunnel DNS address. The existing `environment: isolated-lab` requirement remains enforced. System VPN remains visibly designated for isolated trials until the native network test gate passes; production deployment and Internet gateway/NAT configuration are separate operator tasks. No VPS is deployed or changed by this component.
+Use a numeric IPv4 Core endpoint, a valid private device address and a numeric unicast tunnel DNS address. Legacy packet tests require `environment: isolated-lab`; current managed server exports retain their actual `managed-vps` environment and private device pool. System VPN remains visibly designated for isolated trials until the native network test gate passes; production deployment and Internet gateway/NAT configuration are separate operator tasks. No VPS is deployed or changed by this component.
 
 The UI asks for explicit confirmation; only the small network helper requests UAC. It installs persistent Windows Filtering Platform protection, creates its own Wintun adapter, assigns the device address, sets tunnel DNS and installs split default IPv4 routes. IPv6 outside loopback is blocked, not tunneled. A narrowly scoped endpoint exception allows only the Core worker's UDP transport. The interface and network worker never run as administrator.
 

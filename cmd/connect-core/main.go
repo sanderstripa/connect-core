@@ -77,7 +77,6 @@ func run() error {
 			return err
 		}
 		var s, c core.Config
-		var err error
 		if mode == "init-enrollment-lab" {
 			s, c, err = lab.GenerateIssuance(absolute)
 		} else {

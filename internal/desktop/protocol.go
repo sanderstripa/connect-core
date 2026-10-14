@@ -18,6 +18,7 @@ const (
 	ImportURI        byte = 6
 	ImportQR         byte = 7
 	Recover          byte = 8
+	ConfigureDNS     byte = 9
 	ConfigureNetwork byte = 32
 	FromTUN          byte = 33
 	ToTUN            byte = 34
@@ -33,7 +34,10 @@ const (
 	Enrolling = 6
 )
 
-// Status payload: state/code uint32, TX/RX/elapsed uint64, endpoint[128].
+// Status: state/code, TX/RX/elapsed, mode, bounded identifier[128], DNS RTT.
+// The state discriminates the identifier: Enrolling carries a public-key SHA256
+// fingerprint, all other states carry the selected Core endpoint. Neither carries
+// an invitation token or private material.
 const StatusSize = 176
 
 func Read(r io.Reader) (byte, []byte, error) {

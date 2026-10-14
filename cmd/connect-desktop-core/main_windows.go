@@ -195,6 +195,7 @@ type worker struct {
 	since       time.Time
 	elapsed     time.Duration
 	dnsRTT      uint64
+	fingerprint string
 	output      sync.Mutex
 	writer      io.Writer
 }
@@ -214,6 +215,9 @@ func (w *worker) emit() {
 	}
 	binary.LittleEndian.PutUint64(p[24:], uint64(elapsed.Milliseconds()))
 	mode := uint32(0)
+	if w.b.Config.Environment == "managed-vps" && w.b.Config.Network == nil {
+		mode = 4 // Current v2 server profile needs an explicit local tunnel DNS.
+	}
 	if w.b.Config.Network != nil {
 		mode = 2
 	}
@@ -224,7 +228,11 @@ func (w *worker) emit() {
 		mode = 3
 	}
 	binary.LittleEndian.PutUint32(p[32:], mode)
-	copy(p[36:], w.b.Config.Endpoint)
+	if w.state == desktop.Enrolling {
+		copy(p[36:164], w.fingerprint)
+	} else {
+		copy(p[36:164], w.b.Config.Endpoint)
+	}
 	binary.LittleEndian.PutUint64(p[168:], w.dnsRTT)
 	w.mu.Unlock()
 	w.output.Lock()
@@ -259,6 +267,9 @@ func (w *worker) stop() {
 	w.cancel = nil
 	w.device = nil
 	w.state = desktop.Ready
+	if w.b.Config.Version != 2 {
+		w.state = desktop.Idle
+	}
 	if cleanup == nil {
 		w.native = nil
 		w.code = 0
@@ -276,6 +287,12 @@ func (w *worker) connect() {
 		return
 	}
 	b := w.b
+	if b.Config.Environment == "managed-vps" && b.Config.Network == nil {
+		w.state = desktop.Ready
+		w.code = 11
+		w.mu.Unlock()
+		return
+	}
 	if b.Config.Version != 2 {
 		w.state = desktop.Failed
 		w.code = 1
@@ -456,10 +473,39 @@ func main() {
 		if e != nil {
 			return
 		}
-		if kind != desktop.Import && kind != desktop.ImportURI && kind != desktop.ImportQR && len(p) != 0 {
+		if kind != desktop.Import && kind != desktop.ImportURI && kind != desktop.ImportQR && kind != desktop.ConfigureDNS && len(p) != 0 {
 			return
 		}
 		switch kind {
+		case desktop.ConfigureDNS:
+			w.stop()
+			w.mu.Lock()
+			b, recoveryRequired := w.b, w.code == 5
+			w.mu.Unlock()
+			if recoveryRequired {
+				w.emit()
+				continue
+			}
+			b.Config.Network = &ipvpn.NetworkPolicy{Mode: "system-vpn", DNS: string(p)}
+			_, err := b.Config.Validate(false)
+			if b.Config.Environment != "managed-vps" || len(p) > 15 {
+				err = errors.New("explicit managed profile DNS required")
+			}
+			if err == nil {
+				err = save(path, b)
+			}
+			w.mu.Lock()
+			if err != nil {
+				w.code = 12
+			} else {
+				w.b = b
+				w.state = desktop.Ready
+				w.code = 0
+			}
+			w.mu.Unlock()
+			if err == nil {
+				w.connect()
+			}
 		case desktop.Recover:
 			w.stop()
 			err := recoverNative(context.Background())

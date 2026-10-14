@@ -1,1 +1,16 @@
 1 24 "app.manifest"
+
+#include <windows.h>
+#pragma code_page(65001)
+101 DIALOGEX 0, 0, 280, 146
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "CONNECT CORE — DNS через VPN"
+FONT 10, "Segoe UI"
+BEGIN
+    LTEXT "Для профиля панели нужен адрес IPv4 DNS, доступный через VPN. Прямой обход при сбое запрещён.", -1, 12, 12, 256, 32
+    LTEXT "IPv4 DNS через туннель:", -1, 12, 49, 250, 12
+    EDITTEXT 1001, 12, 65, 256, 17, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Изолированное испытание: Wintun, DNS и маршруты настроит отдельный помощник после UAC. IPv6 блокируется.", -1, 12, 89, 256, 25
+    DEFPUSHBUTTON "Подключить", IDOK, 103, 121, 80, 18
+    PUSHBUTTON "Отмена", IDCANCEL, 190, 121, 78, 18
+END
