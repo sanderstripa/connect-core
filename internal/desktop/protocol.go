@@ -21,6 +21,7 @@ const (
 	ConfigureNetwork byte = 32
 	FromTUN          byte = 33
 	ToTUN            byte = 34
+	NetworkCounters  byte = 35
 	Status           byte = 128
 )
 const (

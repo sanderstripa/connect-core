@@ -197,6 +197,10 @@ func (b *nativeBridge) read() {
 		if e != nil {
 			return
 		}
+		if kind == desktop.NetworkCounters && len(p) == 24 {
+			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
+			continue
+		}
 		if kind == desktop.Status && len(p) == desktop.StatusSize {
 			select {
 			case b.ack <- binary.LittleEndian.Uint32(p):

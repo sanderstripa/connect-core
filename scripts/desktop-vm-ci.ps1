@@ -98,6 +98,7 @@ try{
  $passed=$true
 }finally{
  if($client){$client.Status() | Set-Content (Join-Path $out 'final-core-status.log')}
+ Get-NetAdapterStatistics -Name 'ccvpn-*' -ErrorAction SilentlyContinue | ConvertTo-Json | Set-Content (Join-Path $out 'tun-statistics.json')
  netsh wfp show netevents file=$(Join-Path $out 'wfp-events.xml') | Out-Null
  netsh wfp show filters file=$(Join-Path $out 'wfp-filters.xml') | Out-Null
  Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric | ConvertTo-Json | Set-Content (Join-Path $out 'final-routes.json')

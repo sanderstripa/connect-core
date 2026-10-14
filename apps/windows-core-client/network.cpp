@@ -28,7 +28,7 @@ HANDLE pipe=INVALID_HANDLE_VALUE,engine=nullptr,adapter=nullptr,session=nullptr,
 HANDLE controlThread=nullptr;
 HMODULE wintun=nullptr;NET_LUID luid{};GUID adapterGuid{};MIB_IPFORWARD_ROW2 endpointRoute{};bool ownEndpoint=false,guard=false;
 std::mutex outputMutex;std::atomic<bool> stopping=false;
-DWORD stage=0,systemError=0;
+DWORD stage=0,systemError=0;std::atomic<uint64_t> rawPackets=0,rawBytes=0,polls=0;
 HANDLE (WINAPI *createAdapter)(LPCWSTR,LPCWSTR,const GUID*);
 void (WINAPI *closeAdapter)(HANDLE);
 void (WINAPI *getLuid)(HANDLE,NET_LUID*);
@@ -115,7 +115,7 @@ void recover(){
  NET_LUID old{};GUID expected{},current{};if(readJournal(L"Luid",RRF_RT_REG_BINARY,&old,sizeof(old))&&readJournal(L"AdapterGUID",RRF_RT_REG_BINARY,&expected,sizeof(expected))){DWORD e=ConvertInterfaceLuidToGuid(&old,&current);if(e==ERROR_SUCCESS){if(memcmp(&expected,&current,sizeof(current)))throw DWORD(ERROR_INVALID_DATA);throw DWORD(ERROR_BUSY);}if(e!=ERROR_FILE_NOT_FOUND&&e!=ERROR_NOT_FOUND)throw e;}
  cleanup();
 }
-void sendPackets(){HANDLE waits[]={readEvent(session),worker};while(!stopping){DWORD size=0;BYTE* p=receivePacket(session,&size);if(p){bool ok=size<=Mtu&&frame(FromTun,p,size);releasePacket(session,p);if(!ok)break;continue;}if(GetLastError()!=ERROR_NO_MORE_ITEMS)break;DWORD event=WaitForMultipleObjects(2,waits,FALSE,250);if(event==WAIT_OBJECT_0+1)break;}if(!stopping.exchange(true)){status(4,5);if(controlThread)CancelSynchronousIo(controlThread);}}
+void sendPackets(){HANDLE waits[]={readEvent(session),worker};while(!stopping){++polls;DWORD size=0;BYTE* p=receivePacket(session,&size);if(p){++rawPackets;rawBytes+=size;bool ok=size<=Mtu&&frame(FromTun,p,size);releasePacket(session,p);if(!ok)break;continue;}if(GetLastError()!=ERROR_NO_MORE_ITEMS)break;DWORD event=WaitForMultipleObjects(2,waits,FALSE,250);if(event==WAIT_OBJECT_0+1)break;}if(!stopping.exchange(true)){status(4,5);if(controlThread)CancelSynchronousIo(controlThread);}}
 void checkSponsor(DWORD pid,const std::wstring& name){
  const std::wstring prefix=L"\\\\.\\pipe\\ConnectCore-";if(!pid||name.size()!=prefix.size()+64||name.rfind(prefix,0)!=0)throw DWORD(ERROR_INVALID_PARAMETER);for(size_t i=prefix.size();i<name.size();++i)if(!((name[i]>=L'0'&&name[i]<=L'9')||(name[i]>=L'a'&&name[i]<=L'f')))throw DWORD(ERROR_INVALID_PARAMETER);
  worker=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(!worker)throw GetLastError();wchar_t path[32768];DWORD n=32768;check(QueryFullProcessImageNameW(worker,0,path,&n)?0:GetLastError());if(_wcsicmp(std::wstring(path,n).c_str(),adjacent(L"connect-desktop-core.exe").c_str()))throw DWORD(ERROR_ACCESS_DENIED);
@@ -137,7 +137,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
   Plan p{};if(length!=sizeof(p)||!readExact(&p,sizeof(p)))throw DWORD(ERROR_INVALID_DATA);validate(p);stage=1;trustedDLL();
   stage=2;wchar_t* end=nullptr;DWORD pid=wcstoul(argv[2],&end,10);std::wstring name=L"ccvpn-"+std::to_wstring(pid);NET_LUID old{};if(ConvertInterfaceAliasToLuid(name.c_str(),&old)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);check(CoCreateGuid(&adapterGuid));adapter=createAdapter(name.c_str(),L"CONNECT CORE",&adapterGuid);if(!adapter)throw GetLastError();getLuid(adapter,&luid);check(ConvertInterfaceLuidToGuid(&luid,&adapterGuid));session=startSession(adapter,0x400000);if(!session)throw GetLastError();stage=3;checkpoint();stage=4;prepareEndpoint(p);stage=5;installGuard(p);configure(p);stage=9;status(3);controlThread=OpenThread(THREAD_TERMINATE,FALSE,GetCurrentThreadId());if(!controlThread)throw GetLastError();sender=std::thread(sendPackets);
   while(!stopping){if(!readExact(h,8))break;if(h[0]!='C'||h[1]!='C'||h[2]!=2)break;memcpy(&length,h+4,4);if(h[3]==Exit&&length==0){explicitStop=true;break;}if(h[3]!=ToTun||length<20||length>Mtu)break;BYTE bytes[Mtu];if(!readExact(bytes,length))break;BYTE* packet=allocatePacket(session,length);if(!packet)throw GetLastError();memcpy(packet,bytes,length);sendPacket(session,packet);}
-  stopping=true;if(sender.joinable())sender.join();if(explicitStop){cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
+  stopping=true;if(sender.joinable())sender.join();if(explicitStop){uint64_t counters[3]={rawPackets.load(),rawBytes.load(),polls.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
  }catch(DWORD e){error=e;systemError=e;stopping=true;if(sender.joinable())sender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
  closeTun();if(controlThread)CloseHandle(controlThread);if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
 }

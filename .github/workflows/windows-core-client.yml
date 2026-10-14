@@ -70,6 +70,7 @@ jobs:
             desktop-vm-artifacts/final-routes.json
             desktop-vm-artifacts/final-addresses.json
             desktop-vm-artifacts/wfp-*.xml
+            desktop-vm-artifacts/tun-statistics.json
             desktop-vm-artifacts/*.pcap
             desktop-vm-artifacts/*.pcapng
             desktop-vm-artifacts/*.etl
