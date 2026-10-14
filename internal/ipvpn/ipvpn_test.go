@@ -172,13 +172,14 @@ func (d *memoryDevice) Write(b []byte) (int, error) {
 func (d *memoryDevice) Close() error { d.once.Do(func() { close(d.done) }); return nil }
 
 type fixture struct {
-	address string
-	tls     *tls.Config
-	server  Config
-	device  *memoryDevice
-	stats   *Stats
-	cancel  context.CancelFunc
-	done    chan error
+	address     string
+	tls         *tls.Config
+	server      Config
+	device      *memoryDevice
+	stats       *Stats
+	cancel      context.CancelFunc
+	done        chan error
+	closeSocket func() error
 }
 
 func setup(t testing.TB, configure ...func(*Config)) fixture {
@@ -203,7 +204,7 @@ func setup(t testing.TB, configure ...func(*Config)) fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	l, e := quic.ListenAddr("127.0.0.1:0", st, QUIC())
+	l, closeSocket, e := Listen("127.0.0.1:0", st)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -214,6 +215,7 @@ func setup(t testing.TB, configure ...func(*Config)) fixture {
 	go func() { done <- Serve(ctx, l, d, policies, stats) }()
 	t.Cleanup(func() {
 		cancel()
+		_ = closeSocket()
 		select {
 		case e := <-done:
 			if e != nil {
@@ -223,7 +225,7 @@ func setup(t testing.TB, configure ...func(*Config)) fixture {
 			t.Error("server shutdown stuck")
 		}
 	})
-	return fixture{l.Addr().String(), ct, cfg, d, stats, cancel, done}
+	return fixture{l.Addr().String(), ct, cfg, d, stats, cancel, done, closeSocket}
 }
 func receive(t testing.TB, ch <-chan []byte) []byte {
 	t.Helper()

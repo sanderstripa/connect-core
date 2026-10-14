@@ -1,7 +1,9 @@
 # CONNECT Core
 
 Separate native Windows 11 laboratory component: [CONNECT CORE client](apps/windows-core-client/README.md).
-It uses the real CONNECT IP v2 Go engine without changing system routes or the existing CONNECT application.
+It uses the real CONNECT IP v2 Go engine. Its opt-in system IPv4 mode manages
+owned routes and DNS through a separate elevated helper, with WFP fail-closed
+protection. The existing CONNECT application is unchanged.
 
 Experimental network engine, with a separate experimental **CONNECT Protocol**.
 Two working paths in the existing Go engine: legacy loopback TCP forwarding and
@@ -109,12 +111,19 @@ under your own account and do not treat generated keys as production secrets.
 
 The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/ICMP
 packets, QUIC datagrams, static device leases and private destination policy.
-SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
-route/DNS/firewall management, full-device kill switch, runtime adapters and
-public/remote administration are **not implemented**. Local CONNECT UI is available
-for the managed IP v2 path described above. Other applications' traffic outside
-the lab is not covered. Namespace leak tests do not prove system-wide Windows
-VPN leak safety. Dependencies/licenses and exact reuse are documented in
+The managed v2 CLI client adds fresh authenticated reconnects while retaining
+and draining its native interface, plus private versioned status/stop IPC.
+Its separate CI-only network helper and paired Windows/Linux VM tests remain
+available in [the VM stage](docs/VM-PAIR.md). The desktop client uses its own
+DPAPI worker and elevated WFP helper; these IPC/helper interfaces are distinct.
+
+SOCKS, IPv6 tunneling, HTTP/2 fallback, masking, transparent recovery of existing
+flows, runtime adapters and public administration are **not implemented**.
+IPv6 outside loopback is blocked in desktop system mode. Local CONNECT UI is
+available for managed IP v2. Public Internet performance, production VPS field
+operation and boot-time isolation are not established by disposable VM tests.
+Namespace leak tests alone do not prove system-wide Windows VPN leak safety.
+Dependencies/licenses and exact reuse are documented in
 [decisions](docs/DECISIONS.md) and [refreshed audit](docs/IMPLEMENTATION-AUDIT.md).
 
 ## Checks

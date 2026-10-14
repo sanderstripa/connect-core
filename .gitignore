@@ -15,3 +15,5 @@ __pycache__/
 /ui-browser-artifacts/
 /node_modules/
 /package-lock.json
+/vm-boot/
+/vm-pair-artifacts/

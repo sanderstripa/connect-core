@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"
@@ -28,7 +27,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
+		return fmt.Errorf("usage: connect-core {init-lab|init-enrollment-lab|import-link|server|client|http-lab|ip-server|ip-client|ip-client-managed|ip-client-reconnect} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
 	if mode == "import-link" {
@@ -67,6 +66,9 @@ func run() error {
 			case <-time.After(3 * time.Second):
 			}
 		}
+	}
+	if mode == "ip-client-managed" || mode == "ip-client-reconnect" {
+		return runManaged(path, mode == "ip-client-managed")
 	}
 	if mode == "init-lab" || mode == "init-enrollment-lab" {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -164,11 +166,11 @@ func runIP(mode, path string) error {
 	stats := &ipvpn.Stats{}
 	defer func() { b, _ := json.Marshal(stats.Snapshot()); fmt.Printf("CONNECT IP stats %s\n", b) }()
 	if server {
-		l, e := quic.ListenAddr(cfg.Endpoint, t, ipvpn.QUIC())
+		l, closeListener, e := ipvpn.Listen(cfg.Endpoint, t)
 		if e != nil {
 			return e
 		}
-		defer l.Close()
+		defer closeListener()
 		d, e := ipvpn.Open(cfg.Interface)
 		if e != nil {
 			return e
