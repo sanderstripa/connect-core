@@ -69,6 +69,8 @@ try{
  $client.Send(1,$profile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
  if($client.Mode -ne 1){throw 'System Wintun mode not active'}
  Write-Output 'REAL_WINDOWS_WINTUN_SYSTEM_ROUTES_READY'
+ Find-NetRoute -RemoteIPAddress 10.232.0.1 | Format-List | Out-String | Set-Content (Join-Path $out 'selected-route.log')
+ $client.Send(4);Start-Sleep -Seconds 4;$client.Status() | Set-Content (Join-Path $out 'initial-dns-status.log')
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'measurements.json')
  if($LASTEXITCODE){throw 'Real cross-kernel TCP/UDP/DNS failed'}
  python -c "import socket,time; r=socket.getaddrinfo('probe'+str(time.time_ns())+'.test',80,socket.AF_INET); assert r and all(x[4][0]=='10.232.0.1' for x in r); print('Windows system DNS traversed real Linux DNS')"
