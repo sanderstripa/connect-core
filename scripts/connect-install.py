@@ -262,7 +262,7 @@ def remote_panel_check(m):
     raise RuntimeError('Public HTTPS panel could not be reached from two external nodes; check provider firewall/access. Installation is not successful')
 
 def certificate_issue(m):
-    tls_root = CONFIG / 'panel-tls'; tls_root.mkdir(mode=0o750, exist_ok=True)
+    tls_root = CONFIG / 'panel-tls'; tls_root.mkdir(mode=0o750, exist_ok=True); tls_root.chmod(0o750)
     admin_gid = int(run('getent', 'group', GROUP).stdout.split(':')[2]); os.chown(tls_root,0,admin_gid)
     stage = tls_root / ('cert-' + uuid.uuid4().hex); stage.mkdir(mode=0o700)
     try:
