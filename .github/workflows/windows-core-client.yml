@@ -5,9 +5,29 @@ on:
 permissions:
   contents: read
 jobs:
-  build:
-    runs-on: windows-latest
+  linux-image:
+    runs-on: ubuntu-latest
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.0'
+      - run: sudo apt-get update && sudo apt-get install -y cpio
+      - run: bash scripts/vm-linux-build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-disposable-linux-boot
+          retention-days: 1
+          path: |
+            vm-boot/vmlinuz
+            vm-boot/rootfs.cpio.gz
+            vm-boot/boot-sha256.txt
+            vm-boot/lab/
+  build:
+    needs: linux-image
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -32,6 +52,24 @@ jobs:
           Copy-Item $dll dist/
           Copy-Item build/wintun/wintun/LICENSE.txt dist/WINTUN-LICENSE.txt
       - run: ./scripts/desktop-smoke.ps1 -Directory dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-disposable-linux-boot
+          path: vm-boot/
+      - run: ./scripts/desktop-vm-ci.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-system-vpn-evidence
+          path: |
+            desktop-vm-artifacts/*.log
+            desktop-vm-artifacts/*measurements.json
+            desktop-vm-artifacts/*verification.json
+            desktop-vm-artifacts/*probes.json
+            desktop-vm-artifacts/*adapters.json
+            desktop-vm-artifacts/*.pcap
+            desktop-vm-artifacts/*.pcapng
+            desktop-vm-artifacts/*.etl
       - name: Include instructions, notices and checksums
         shell: pwsh
         run: |

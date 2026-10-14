@@ -495,6 +495,7 @@ func main() {
 				w.stats = nil
 				w.since = time.Time{}
 				w.elapsed = 0
+				w.dnsRTT = 0
 			}
 			w.mu.Unlock()
 		case desktop.Connect:
