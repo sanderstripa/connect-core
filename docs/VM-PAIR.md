@@ -9,8 +9,13 @@ with GitHub Actions; do not run the network helper on a personal workstation.
 
 The client runs in a disposable GitHub Windows VM with official, hash-pinned and
 signature-checked Wintun. A second Linux kernel runs in QEMU software emulation
-inside that VM. QEMU uses restricted user networking and one loopback UDP port
-forward. There is no TAP bridge, Hyper-V configuration, physical host route, VPS,
+inside that VM. QEMU uses user networking and one loopback UDP port forward.
+The guest has no default route and installs default-drop nftables input/output/
+forward chains before starting Core, allowing only the exact QUIC peer and
+client/service forwarding. SLIRP's `restrict=on` cannot be used here: its
+[UDP input implementation](https://raw.githubusercontent.com/qemu/libslirp/master/src/udp.c)
+drops guest UDP before looking up a forwarding socket, including QUIC replies.
+There is no TAP bridge, Hyper-V configuration, physical host route, VPS,
 public listener, or production credential. This is two independent OS kernels,
 not two processes pretending to be two machines. It is not an independent
 hardware benchmark or a public internet deployment.

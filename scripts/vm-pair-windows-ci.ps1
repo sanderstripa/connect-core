@@ -57,8 +57,9 @@ foreach($field in 'ca','cert','key'){$cfg.trust.$field=Join-Path $boot ('lab/'+[
 $profile=Join-Path $out 'client.json';$cfg | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $profile
 try{
  # A second, independent Linux kernel; no host bridge/TAP, Hyper-V or physical
- # route changes. SLIRP is restricted and only forwards the loopback QUIC port.
- $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,restrict=on,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
+ # route changes. Guest default-drop rules and no default route isolate SLIRP;
+ # its restrict mode cannot carry UDP replies (see VM-PAIR.md).
+ $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
  Await-Line $vm '^LAB_SERVER_READY$' 180
  $client=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$profile)
  Await-Line $client '"state":"ready"' 30

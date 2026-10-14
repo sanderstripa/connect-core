@@ -28,6 +28,25 @@ ip -n edge link set el up
 ip -n service link set sl up
 ip -n service route add 10.231.0.2/32 via 10.232.0.2
 ip netns exec edge sysctl -q -w net.ipv4.ip_forward=1
+# SLIRP restrict mode drops even replies to forwarded UDP. Enforce isolation in
+# the disposable guest instead: no default route and exact default-drop policy.
+ip netns exec edge nft -f - <<EOF
+table inet connect_lab {
+ chain input {
+  type filter hook input priority 0; policy drop;
+  iifname "$nic" ip saddr 10.0.2.2 ip daddr 10.0.2.15 udp dport 17444 accept
+ }
+ chain output {
+  type filter hook output priority 0; policy drop;
+  oifname "$nic" ip saddr 10.0.2.15 ip daddr 10.0.2.2 udp sport 17444 accept
+ }
+ chain forward {
+  type filter hook forward priority 0; policy drop;
+  iifname "ccip0" oifname "el" ip saddr 10.231.0.2 ip daddr 10.232.0.1 accept
+  iifname "el" oifname "ccip0" ip saddr 10.232.0.1 ip daddr 10.231.0.2 accept
+ }
+}
+EOF
 ip netns exec service python3 /services.py serve >/artifacts/services.log 2>&1 &
 ip netns exec service python3 /services.py ready
 ip netns exec edge tcpdump -U -n -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
@@ -53,7 +72,7 @@ while read -r command; do
  case "$command" in
   stop-server) kill -KILL "$server"; wait "$server" 2>/dev/null || true; echo LAB_SERVER_STOPPED ;;
   start-server) start_server ;;
-  diagnostics) cat /artifacts/server.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; echo LAB_DIAGNOSTICS_END ;;
+  diagnostics) cat /artifacts/server.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys
 p=pathlib.Path('/proc')/sys.argv[1]

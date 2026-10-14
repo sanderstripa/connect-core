@@ -23,6 +23,10 @@ function Undo-Lab {
     if($state.id -notmatch '^CONNECT-LAB-[0-9a-f]{32}$' -or $state.interface -notmatch '^ccip[a-zA-Z0-9-]{1,11}$' -or $state.ip -ne '10.231.0.2'){throw 'Invalid journal ownership'}
     foreach($name in @($state.firewall_attempted)){if($name -notmatch ('^'+$state.id+'-(ipv4|ipv6|endpoint-tcp|endpoint-other-udp|service-outside-tun)$')){throw 'Foreign firewall rule in journal'}}
     foreach($prefix in @($state.routes_attempted)){if($prefix -ne '10.232.0.1/32'){throw 'Foreign route in journal'}}
+    # Validate the complete restore plan before any guard can be removed.
+    if($state.before.mtu -lt 576 -or $state.before.mtu -gt 65535 -or $state.before.metric -lt 0 -or $state.before.metric -gt 9999 -or $state.before.dad -lt 0 -or $state.before.dad -gt 255 -or $state.before.dhcp -notin @('Enabled','Disabled') -or $state.before.automatic_metric -notin @('Enabled','Disabled')){throw 'Invalid interface restore snapshot'}
+    foreach($profile in @($state.before.profiles)){if($profile.name -notin @('Domain','Private','Public') -or $profile.enabled -notin @('True','False','NotConfigured')){throw 'Invalid firewall profile snapshot'}}
+    foreach($address in @($state.before.dns)){ $parsedAddress=$null; if(-not [Net.IPAddress]::TryParse($address,[ref]$parsedAddress)){throw 'Invalid DNS restore snapshot'} }
     # Firewall guards are removed LAST. A missing/deleted adapter is normal after
     # process death. A reused name with a different GUID is never reconfigured.
     $adapter=Get-NetAdapter -Name $state.interface -ErrorAction SilentlyContinue
@@ -39,7 +43,7 @@ function Undo-Lab {
     if($state.nrpt_name){Get-DnsClientNrptRule -Name $state.nrpt_name -ErrorAction SilentlyContinue | Where-Object Comment -eq $state.id | Remove-DnsClientNrptRule -Force}
     elseif($state.nrpt_attempted){Get-DnsClientNrptRule | Where-Object Comment -eq $state.id | Remove-DnsClientNrptRule -Force}
     foreach($name in @($state.firewall_attempted)){Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule}
-    if($state.profiles_attempted){foreach($profile in @($state.before.profiles)){if($profile.name -notin @('Domain','Private','Public') -or $profile.enabled -notin @('True','False','NotConfigured')){throw 'Invalid firewall profile snapshot'};Set-NetFirewallProfile -Profile $profile.name -Enabled $profile.enabled}}
+    if($state.profiles_attempted){foreach($profile in @($state.before.profiles)){Set-NetFirewallProfile -Profile $profile.name -Enabled $profile.enabled}}
     $state.phase='rolled-back';Save-Journal
 }
 try {

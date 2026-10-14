@@ -13,7 +13,7 @@ for role in ('server','client'):
  for field in ('ca','cert','key'): c['trust'][field]='/lab/'+pathlib.Path(c['trust'][field]).name
  f.write_text(json.dumps(c,indent=2))
 PY
-container=$(docker create alpine:3.24.1 sh -c 'apk add --no-cache linux-virt iproute2 bash python3 tcpdump && cp /boot/vmlinuz-virt /vmlinuz')
+container=$(docker create alpine:3.24.1 sh -c 'apk add --no-cache linux-virt iproute2 bash python3 tcpdump nftables && cp /boot/vmlinuz-virt /vmlinuz')
 trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
 docker start -a "$container"
 docker cp "$container:/vmlinuz" "$out/vmlinuz"
