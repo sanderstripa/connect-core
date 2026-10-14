@@ -45,6 +45,8 @@ for component in components:
                 ip = packet[14:]
                 assert len(ip) >= 20 and ip[0] >> 4 == 4
                 header = (ip[0] & 15) * 4
+                assert 20 <= header <= len(ip) and len(ip) >= struct.unpack_from('!H', ip, 2)[0], 'truncated IPv4 capture'
+                assert struct.unpack_from('!H', ip, 6)[0] & 0x3fff == 0, 'fragmented underlay IPv4 is not validated'
                 src, dst = socket.inet_ntoa(ip[12:16]), socket.inet_ntoa(ip[16:20])
                 assert '10.232.0.1' not in (src, dst), 'service bypassed Wintun'
                 assert dst != '1.1.1.1', 'direct IPv4/DNS probe reached underlay'
@@ -57,8 +59,12 @@ for component in components:
                     assert 53 not in ports, 'external TCP DNS on underlay'
                     length = struct.unpack_from('!H', ip, 2)[0]
                     payload = length - header - (ip[header+12] >> 4) * 4
-                    counts['background_tcp_payload_packets' if payload else 'background_tcp_control_packets'] += 1
-                    assert payload == 0, 'background TCP data escaped static lab guard'
+                    if src in component['local_ipv4']:
+                        counts['outbound_tcp_payload_packets' if payload else 'outbound_tcp_control_packets'] += 1
+                        assert payload == 0, 'outbound TCP data escaped static lab guard'
+                    else:
+                        assert dst in component['local_ipv4'], 'unknown NIC addresses: capture scope changed'
+                        counts['inbound_tcp_payload_packets' if payload else 'inbound_tcp_control_packets'] += 1
             elif ether == 0x86dd:
                 ip = packet[14:]
                 assert len(ip) >= 40
@@ -67,6 +73,7 @@ for component in components:
                 assert ip[6] == 58 and len(ip) >= 41 and ip[40] in (133, 134, 135, 136), 'unsupported IPv6 data on underlay'
                 counts['ipv6_neighbor_discovery'] += 1
             else:
+                assert ether in (0x0806, 0x88cc), 'unsupported underlay framing, including VLAN'
                 counts['non_ip'] += 1
         offset += size
     results.append({'component_id': component['id'], 'role': component['role'], 'description': component['description'], 'counts': dict(counts)})

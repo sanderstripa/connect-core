@@ -75,6 +75,15 @@ production Windows Filtering Platform service: adapter hotplug, hostile journal
 editing, a reboot recovery service and other privileged network editors are
 outside this static disposable lab boundary.
 
+Before declaring the network transaction active, the CI helper journals and
+terminates existing external IPv4 TCP flows with the documented Windows
+[SetTcpEntry API](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-settcpentry).
+This closes the cached-flow reauthorization gap found in a real NIC capture.
+Existing external IPv6 flows cause setup refusal. Terminated application sessions
+cannot be restored by rollback: only network configuration is restored. This
+disruptive operation is restricted to disposable CI VMs and must not be reused
+as workstation or production VPN setup.
+
 ## Evidence and validation gates
 
 The harness checks actual HTTP, binary TCP/UDP with 1, 8 and 32 concurrent

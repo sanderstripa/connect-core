@@ -72,6 +72,7 @@ try{
  Write-Output 'LAB_LINUX_VM_READY'
  $vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 15
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
+ Get-NetRoute -AddressFamily IPv6 | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-ipv6-routes.log')
  $client=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$profile)
  Await-Line $client '"state":"ready"' 30
  Write-Output 'LAB_WINDOWS_AUTHENTICATED_TUN_READY'
@@ -81,7 +82,7 @@ try{
  pktmon list | Set-Content (Join-Path $out 'windows-components.log')
  foreach($line in Get-Content (Join-Path $out 'windows-components.log')){
   if($line -match '^\s*([0-9]+)\s+(.+)$'){
-   $description=$Matches[2].Trim();$captureComponents+=[pscustomobject]@{id=[int]$Matches[1];description=$description;role=$(if($description -match 'WireGuard Tunnel'){'tunnel'}else{'underlay'})}
+   $description=$Matches[2].Trim();$captureComponents+=[pscustomobject]@{id=[int]$Matches[1];description=$description;role=$(if($description -match 'WireGuard Tunnel'){'tunnel'}else{'underlay'});local_ipv4=@(Get-NetIPAddress -AddressFamily IPv4 | Select-Object -ExpandProperty IPAddress | Sort-Object -Unique)}
   }
  }
  if(@($captureComponents | Where-Object role -eq 'tunnel').Count -ne 1){throw 'Native tunnel capture component cannot be identified uniquely'}
@@ -124,7 +125,7 @@ try{
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'recovery-measurements.json')
  if($LASTEXITCODE -ne 0){throw 'Recovery failed'}
  Write-Output 'LAB_SERVER_STOP_RESTART_RECOVERY_PASSED'
- python "$PSScriptRoot/vm-negative-probes.py"
+ python "$PSScriptRoot/vm-negative-probes.py" | Tee-Object -FilePath (Join-Path $out 'active-negative-probes.log')
  if($LASTEXITCODE -ne 0){throw 'IPv4/IPv6/DNS guard failed'}
  Clear-Lines $client;$client.writer.WriteLine('{"ipc_version":1,"command":"status"}');Await-Line $client '"state":"ready"' 5
  $status=@($client.lines | Where-Object {$_ -match '"state":"ready"'})[-1] | ConvertFrom-Json
@@ -139,7 +140,7 @@ try{
  $client.process.Kill();$client.process.WaitForExit()
  python "$PSScriptRoot/ip-lab-services.py" failure
  if($LASTEXITCODE -ne 0){throw 'Core crash leaked'}
- python "$PSScriptRoot/vm-negative-probes.py"
+ python "$PSScriptRoot/vm-negative-probes.py" | Tee-Object -FilePath (Join-Path $out 'crash-negative-probes.log')
  if($LASTEXITCODE -ne 0){throw 'Crash guard failed'}
  Write-Output 'LAB_CORE_CRASH_GUARD_PASSED'
  Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180

@@ -46,6 +46,49 @@ function Undo-Lab {
     if($state.profiles_attempted){foreach($profile in @($state.before.profiles)){Set-NetFirewallProfile -Profile $profile.name -Enabled $profile.enabled}}
     $state.phase='rolled-back';Save-Journal
 }
+function Close-OutsideLabTCP([string]$endpoint){
+    # Existing TCP flows can send one last data packet during firewall
+    # reauthorization. This disruptive step belongs ONLY to a disposable CI VM.
+    if(-not ('ConnectLabTcp' -as [type])){
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class ConnectLabTcp {
+ [StructLayout(LayoutKind.Sequential)]
+ public struct Row { public uint State, LocalAddress, LocalPort, RemoteAddress, RemotePort; }
+ [DllImport("iphlpapi.dll", ExactSpelling=true)]
+ public static extern uint SetTcpEntry(ref Row row);
+}
+'@
+    }
+    function Outside-TCP {
+        Get-NetTCPConnection | Where-Object {
+            $remote=[Net.IPAddress]::Parse($_.RemoteAddress)
+            if($remote.IsIPv4MappedToIPv6){$remote=$remote.MapToIPv4()}
+            $_.State.ToString() -notin @('Listen','Bound','Closed','TimeWait','DeleteTCB') -and -not [Net.IPAddress]::IsLoopback($remote) -and $remote.ToString() -notin @($endpoint,'10.232.0.1')
+        }
+    }
+    $state.tcp_reset_attempted=$true;Save-Journal
+    for($pass=0;$pass -lt 3;$pass++){
+        $outside=@(Outside-TCP)
+        if(-not $outside.Count){return}
+        foreach($connection in $outside){
+            $local=[Net.IPAddress]::Parse($connection.LocalAddress);$remote=[Net.IPAddress]::Parse($connection.RemoteAddress)
+            if($local.IsIPv4MappedToIPv6){$local=$local.MapToIPv4()};if($remote.IsIPv4MappedToIPv6){$remote=$remote.MapToIPv4()}
+            if($local.AddressFamily -ne 'InterNetwork' -or $remote.AddressFamily -ne 'InterNetwork'){throw 'Existing external IPv6 flow cannot be closed by the lab helper; refuse setup'}
+            $row=[ConnectLabTcp+Row]::new();$row.State=12
+            $row.LocalAddress=[BitConverter]::ToUInt32($local.GetAddressBytes(),0);$row.RemoteAddress=[BitConverter]::ToUInt32($remote.GetAddressBytes(),0)
+            $row.LocalPort=(([uint32]$connection.LocalPort -band 255) -shl 8) -bor ([uint32]$connection.LocalPort -shr 8)
+            $row.RemotePort=(([uint32]$connection.RemotePort -band 255) -shl 8) -bor ([uint32]$connection.RemotePort -shr 8)
+            $state.tcp_reset_targets+=@{local=$local.ToString();local_port=$connection.LocalPort;remote=$remote.ToString();remote_port=$connection.RemotePort};Save-Journal
+            $code=[ConnectLabTcp]::SetTcpEntry([ref]$row)
+            if($code -ne 0){
+                $remaining=@(Outside-TCP | Where-Object {$_.LocalAddress -eq $connection.LocalAddress -and $_.LocalPort -eq $connection.LocalPort -and $_.RemoteAddress -eq $connection.RemoteAddress -and $_.RemotePort -eq $connection.RemotePort})
+                if($remaining.Count){throw ('Unable to close existing direct TCP flow, Win32 error '+$code)}
+            }
+        }
+    }
+    if(@(Outside-TCP).Count){throw 'Existing direct TCP flows remain; refuse setup'}
+}
 try {
     if($Action -eq 'status'){Get-Content -LiteralPath $Journal -Raw;return}
     if($Action -eq 'rollback'){
@@ -72,7 +115,7 @@ try {
     $dns=@((Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4).ServerAddresses)
     $id='CONNECT-LAB-'+[guid]::NewGuid().ToString('N')
     $profiles=@(Get-NetFirewallProfile | ForEach-Object {@{name=$_.Name.ToString();enabled=$_.Enabled.ToString()}})
-    $script:state=[pscustomobject]@{journal_version=1;id=$id;interface=$cfg.interface;guid=$adapter.InterfaceGuid.ToString();ip=$cfg.device_ip;phase='applying';before=@{profiles=$profiles;dns=$dns;mtu=$ipif.NlMtu;metric=$ipif.InterfaceMetric;automatic_metric=$ipif.AutomaticMetric.ToString();dad=$ipif.DadTransmits;dhcp=$ipif.Dhcp.ToString()};profiles_attempted=$false;firewall_attempted=@();routes_attempted=@();address_attempted=$false;interface_attempted=$false;dns_attempted=$false;nrpt_attempted=$false;nrpt_name=$null}
+    $script:state=[pscustomobject]@{journal_version=1;id=$id;interface=$cfg.interface;guid=$adapter.InterfaceGuid.ToString();ip=$cfg.device_ip;phase='applying';before=@{profiles=$profiles;dns=$dns;mtu=$ipif.NlMtu;metric=$ipif.InterfaceMetric;automatic_metric=$ipif.AutomaticMetric.ToString();dad=$ipif.DadTransmits;dhcp=$ipif.Dhcp.ToString()};profiles_attempted=$false;firewall_attempted=@();routes_attempted=@();address_attempted=$false;interface_attempted=$false;dns_attempted=$false;nrpt_attempted=$false;nrpt_name=$null;tcp_reset_attempted=$false;tcp_reset_targets=@()}
     Save-Journal
     try{
         $state.profiles_attempted=$true;Save-Journal
@@ -102,6 +145,7 @@ try {
         if($unknown.Count){throw 'Connected hidden interface cannot be guarded by this lab helper'}
         $others=@($visible | Where-Object {$_.InterfaceGuid -ne $adapter.InterfaceGuid -and $_.Name -notlike '*Loopback*'} | Select-Object -ExpandProperty Name)
         if($others.Count){Add-Guard 'service-outside-tun' @{RemoteAddress='10.232.0.1';InterfaceAlias=$others}}
+        Close-OutsideLabTCP $endpoint
         $state.interface_attempted=$true;Save-Journal
         Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -NlMtuBytes 1100 -Dhcp Disabled -DadTransmits 0 -InterfaceMetric 5
         $state.address_attempted=$true;Save-Journal
