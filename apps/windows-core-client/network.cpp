@@ -148,7 +148,10 @@ bool ownedInterfacePresent(const GUID& expected,NET_LUID old){
 }
 void removeOwnedAdapter(const GUID& expected,NET_LUID old){
  wchar_t guid[64]{};if(!StringFromGUID2(expected,guid,64))throw DWORD(ERROR_INVALID_DATA);
- HDEVINFO devices=SetupDiGetClassDevsW(&GUID_DEVCLASS_NET,nullptr,nullptr,DIGCF_PRESENT);if(devices==INVALID_HANDLE_VALUE)throw GetLastError();
+ // A crashed software-device owner can leave a non-present PnP instance while
+ // its interface row remains. Include orphaned instances, matching only the
+ // exact journaled GUID already checked against its LUID.
+ HDEVINFO devices=SetupDiGetClassDevsW(&GUID_DEVCLASS_NET,nullptr,nullptr,0);if(devices==INVALID_HANDLE_VALUE)throw GetLastError();
  bool found=false;DWORD error=ERROR_NOT_FOUND;
  for(DWORD i=0;;++i){
   SP_DEVINFO_DATA device{sizeof(device)};if(!SetupDiEnumDeviceInfo(devices,i,&device))break;
