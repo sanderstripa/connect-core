@@ -47,6 +47,7 @@ jobs:
             vm-pair-artifacts/*measurements.json
             vm-pair-artifacts/network-journal.json
             vm-pair-artifacts/capture-verification.json
+            vm-pair-artifacts/*capture*.json
             vm-pair-artifacts/*.log
             vm-pair-artifacts/*.pcap
             vm-pair-artifacts/*.pcapng

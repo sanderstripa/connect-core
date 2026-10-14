@@ -50,7 +50,7 @@ function Await-Line($record,[string]$pattern,[int]$seconds=60){
  throw ("Timed out waiting for $pattern; last output: " + ($record.history | Select-Object -Last 12 | Out-String))
 }
 function Clear-Lines($record){Pump $record;$record.lines.Clear()}
-$vm=$null;$client=$null;$badProcess=$null;$serialListener=$null;$serialPeer=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
+$vm=$null;$client=$null;$badProcess=$null;$serialListener=$null;$serialPeer=$null;$captureStarted=$false;$captureError=$null;$captureComponents=@();$checksPassed=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
 $env:CONNECT_IP_LAB_VM='1'
 $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
 $cfg.interface='ccipvm'
@@ -79,6 +79,13 @@ try{
  Write-Output 'LAB_WINDOWS_NETWORK_ACTIVE'
  # Record Windows packets as an additional artifact; Linux PCAP is analyzed.
  pktmon list | Set-Content (Join-Path $out 'windows-components.log')
+ foreach($line in Get-Content (Join-Path $out 'windows-components.log')){
+  if($line -match '^\s*([0-9]+)\s+(.+)$'){
+   $description=$Matches[2].Trim();$captureComponents+=[pscustomobject]@{id=[int]$Matches[1];description=$description;role=$(if($description -match 'WireGuard Tunnel'){'tunnel'}else{'underlay'})}
+  }
+ }
+ if(@($captureComponents | Where-Object role -eq 'tunnel').Count -ne 1){throw 'Native tunnel capture component cannot be identified uniquely'}
+ ConvertTo-Json -InputObject @($captureComponents) -Depth 4 | Set-Content (Join-Path $out 'windows-capture-components.json')
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
  pktmon start --capture --comp nics --pkt-size 0 --file-name (Join-Path $out 'windows.etl') | Out-Null
  if($LASTEXITCODE -ne 0){throw 'Windows capture did not start'};$captureStarted=$true
@@ -119,6 +126,11 @@ try{
  Write-Output 'LAB_SERVER_STOP_RESTART_RECOVERY_PASSED'
  python "$PSScriptRoot/vm-negative-probes.py"
  if($LASTEXITCODE -ne 0){throw 'IPv4/IPv6/DNS guard failed'}
+ Clear-Lines $client;$client.writer.WriteLine('{"ipc_version":1,"command":"status"}');Await-Line $client '"state":"ready"' 5
+ $status=@($client.lines | Where-Object {$_ -match '"state":"ready"'})[-1] | ConvertFrom-Json
+ if($status.ipc_version -ne 1 -or $status.stats.sent_packets -le 0 -or $status.stats.received_packets -le 0){throw 'IPC status did not return real packet counters'}
+ $client.lines | Set-Content (Join-Path $out 'ipc-status.log')
+ Write-Output 'LAB_PRIVATE_IPC_REAL_STATUS_PASSED'
  $client.process.Refresh();$watch.Stop()
  @{cpu_seconds=$client.process.TotalProcessorTime.TotalSeconds-$startCpu;wall_seconds=$watch.Elapsed.TotalSeconds;working_set_bytes=$client.process.WorkingSet64;peak_working_set_bytes=$client.process.PeakWorkingSet64} | ConvertTo-Json | Set-Content (Join-Path $out 'windows-resources.json')
  Clear-Lines $vm;$vm.writer.WriteLine('metrics');Await-Line $vm '^LAB_LINUX_METRICS '
@@ -135,7 +147,7 @@ try{
  [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'capture-verification.json')
  if($LASTEXITCODE -ne 0){throw 'Linux underlay capture leak check failed'}
- Write-Output 'WINDOWS_LINUX_VM_PAIR_PASSED'
+ $checksPassed=$true
 }finally{
  try{
   if($vm -and -not $vm.process.HasExited -and -not (Test-Path (Join-Path $out 'linux-underlay.pcap'))){
@@ -146,7 +158,18 @@ try{
     [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
    }catch{Write-Warning ('Failure capture unavailable: '+$_.Exception.Message)}
   }
-  if($captureStarted){pktmon stop | Out-Null;pktmon etl2pcap (Join-Path $out 'windows.etl') --out (Join-Path $out 'windows.pcapng') | Out-Null}
+  if($captureStarted){
+   try{
+    pktmon stop | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Windows capture did not stop'}
+    pktmon etl2pcap (Join-Path $out 'windows.etl') --out (Join-Path $out 'windows.pcapng') | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Mixed Windows capture export failed'}
+    foreach($component in $captureComponents){
+     pktmon etl2pcap (Join-Path $out 'windows.etl') --component-id $component.id --out (Join-Path $out ('windows-component-'+$component.id+'.pcapng')) | Out-Null
+     if($LASTEXITCODE -ne 0){throw ('Windows NIC capture export failed: '+$component.id)}
+    }
+   }catch{$captureError=$_}
+  }
   if(Test-Path -LiteralPath $journal){
    & "$PSScriptRoot/lab-network-windows.ps1" -Action rollback -Journal $journal
    $rolled=Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json
@@ -162,4 +185,11 @@ try{
  Remove-Item -LiteralPath $profile,$badPath -ErrorAction SilentlyContinue
  Remove-Item Env:CONNECT_IP_LAB_VM -ErrorAction SilentlyContinue
  }
+}
+if($captureError){throw $captureError}
+if($checksPassed){
+ python "$PSScriptRoot/verify-windows-capture.py" $out | Set-Content (Join-Path $out 'windows-capture-verification.json')
+ if($LASTEXITCODE -ne 0){throw 'Windows per-NIC leakage verification failed'}
+ Write-Output 'LAB_WINDOWS_NIC_CAPTURE_PASSED'
+ Write-Output 'WINDOWS_LINUX_VM_PAIR_PASSED'
 }
