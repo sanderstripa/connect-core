@@ -39,7 +39,7 @@ function Start-LabProcess([string]$file,[string[]]$arguments){
 }
 function Pump($record){
  while($record.pending -and $record.pending.IsCompleted){
-  $line=$record.pending.GetAwaiter().GetResult()
+  try{$line=$record.pending.GetAwaiter().GetResult()}catch{if($record.process.HasExited){$record.pending=$null;break};throw}
   if($null -eq $line){$record.pending=$null;break}
   $record.lines.Add($line);$record.history.Add($line);$record.pending=$record.reader.ReadLineAsync()
  }

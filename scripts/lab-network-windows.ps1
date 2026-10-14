@@ -79,7 +79,7 @@ try {
         Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True
         function Add-Guard([string]$suffix,[hashtable]$ruleOptions){
             $name=$state.id+'-'+$suffix;$state.firewall_attempted+=,$name;Save-Journal
-            New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Profile Any -PolicyStore PersistentStore @ruleOptions | Out-Null
+            try{New-NetFirewallRule -Name $name -DisplayName $name -Direction Outbound -Action Block -Profile Any -PolicyStore PersistentStore @ruleOptions | Out-Null}catch{throw ('Guard '+$suffix+' failed: '+$_.Exception.Message)}
         }
         # Block all IPv4 except the endpoint and lab service, across every NIC.
         # Explicit private ranges avoid CIDR arithmetic and exclude only exact IPs.
@@ -96,8 +96,9 @@ try {
         Add-Guard 'endpoint-other-udp' @{RemoteAddress=$endpoint;Protocol='UDP';RemotePort=$ports}
         # A lab service must not become reachable via a physical/default route
         # after the TUN disappears. Inventory every existing alternate adapter.
-        $visible=@(Get-NetAdapter)
-        $unknown=@(Get-NetIPInterface | Where-Object {$_.ConnectionState -eq 'Connected' -and $_.InterfaceAlias -notin $visible.Name -and $_.InterfaceAlias -notlike '*Loopback*'})
+        $connected=@(Get-NetIPInterface | Where-Object ConnectionState -eq 'Connected')
+        $visible=@(Get-NetAdapter | Where-Object {$_.ifIndex -in $connected.InterfaceIndex})
+        $unknown=@($connected | Where-Object {$_.InterfaceAlias -notin $visible.Name -and $_.InterfaceAlias -notlike '*Loopback*'})
         if($unknown.Count){throw 'Connected hidden interface cannot be guarded by this lab helper'}
         $others=@($visible | Where-Object {$_.InterfaceGuid -ne $adapter.InterfaceGuid -and $_.Name -notlike '*Loopback*'} | Select-Object -ExpandProperty Name)
         if($others.Count){Add-Guard 'service-outside-tun' @{RemoteAddress='10.232.0.1';InterfaceAlias=$others}}

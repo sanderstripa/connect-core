@@ -47,7 +47,10 @@ reject unknown fields/trailing data, and require `ipc_version: 1`:
 Closing the owner pipe stops the client. This interface is intended for a local
 CONNECT./CONNECT UI worker; no network management listener is opened. States
 include starting, authenticating, ready, reconnecting, failed and stopped. Ready follows
-authenticated address assignment and native interface creation. An authenticated
+authenticated address assignment and native interface creation.
+`ready` describes the engine session; a UI must additionally verify the active
+network journal and a tunnel health check before displaying system VPN readiness.
+An authenticated
 session loss preserves that interface and discards disconnected packets while
 retrying fresh mTLS sessions with bounded backoff. Old application packets are
 never replayed into a new session. `ip-client-reconnect` exposes the same lifecycle
