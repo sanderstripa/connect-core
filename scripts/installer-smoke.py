@@ -97,11 +97,13 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         except RuntimeError: pass
         else: raise AssertionError('broken update falsely succeeded')
         assert (installer.ROOT/'current').resolve()==old, 'binary rollback failed'
+        csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
         assert api('/api/status')['devices'][0]['access']=='revoked', 'rollback resurrected revoked credential'
         # Successful update path, then the explicit previous-version rollback.
         release=stage/'good-release';shutil.copytree(old,release);installer.update(None,manifest,'e'*40,release)
         assert manifest['previous_revision']==old.name
         run(sys.executable,str(installer.ROOT/'current'/'scripts'/'connect-install.py'),'rollback')
+        csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
         assert api('/api/status')['devices'][0]['access']=='revoked'
         probe=subprocess.run([str(root/'bin'/'connect-vps-probe'),str(clientdir/'connect-ip-client.json')],cwd=clientdir,capture_output=True,text=True)
         assert probe.returncode!=0, 'revoked client reconnected after binary update/rollback'

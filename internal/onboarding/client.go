@@ -40,6 +40,9 @@ func NewClient(link, dir string) (*Client, error) {
 	if e = os.Mkdir(dir, 0700); e != nil {
 		return nil, errors.New("choose a new private client directory")
 	}
+	if e = protectDirectory(dir); e != nil {
+		return nil, e
+	}
 	_, key, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
 		return nil, e
@@ -62,6 +65,9 @@ func NewClient(link, dir string) (*Client, error) {
 	return client(l, dir, body), nil
 }
 func ResumeClient(link, dir string) (*Client, error) {
+	if e := protectDirectory(dir); e != nil {
+		return nil, e
+	}
 	l, e := Parse(link)
 	if e != nil {
 		return nil, e
