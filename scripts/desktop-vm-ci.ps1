@@ -65,6 +65,7 @@ try{
  $cfg.destinations=@('0.0.0.0/0');$cfg | Add-Member -NotePropertyName network -NotePropertyValue ([pscustomobject]@{mode='system-vpn';dns='10.232.0.1'})
  $profile=Join-Path $out 'private-client.json';$cfg | ConvertTo-Json -Depth 10 | Set-Content $profile -Encoding utf8NoBOM
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
+ netsh wfp set options netevents=on | Out-Null
  $client.Send(1,$profile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
  if($client.Mode -ne 1){throw 'System Wintun mode not active'}
  Write-Output 'REAL_WINDOWS_WINTUN_SYSTEM_ROUTES_READY'
@@ -95,6 +96,8 @@ try{
  $passed=$true
 }finally{
  if($client){$client.Status() | Set-Content (Join-Path $out 'final-core-status.log')}
+ netsh wfp show netevents file=$(Join-Path $out 'wfp-events.xml') | Out-Null
+ netsh wfp show filters file=$(Join-Path $out 'wfp-filters.xml') | Out-Null
  Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric | ConvertTo-Json | Set-Content (Join-Path $out 'final-routes.json')
  Get-NetIPAddress | Select-Object IPAddress,InterfaceIndex,AddressState | ConvertTo-Json | Set-Content (Join-Path $out 'final-addresses.json')
  if(!$passed -and $serial){try{$guestWriter.WriteLine('diagnostics');AwaitGuest '^LAB_DIAGNOSTICS_END$' 20;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 20;$begin=$guestLines.IndexOf('LAB_PCAP_BEGIN');$end=$guestLines.IndexOf('LAB_PCAP_END');[IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($guestLines.GetRange($begin+1,$end-$begin-1) -join '')))}catch{Write-Warning 'Guest diagnostic capture unavailable'}}
