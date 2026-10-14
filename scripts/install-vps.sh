@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve the installation channel once, then build only that immutable source.
 set -euo pipefail
-[[ $(uname -s) == Linux && $EUID == 0 ]] || { echo 'Run on a Linux systemd VPS via sudo'; exit 1; }
+[[ $(uname -s) == Linux ]] || { echo 'Run on a Linux systemd VPS'; exit 1; }
 for command in curl python3 tar; do command -v "$command" >/dev/null || { echo "Missing dependency: $command"; exit 1; }; done
 revision=''
 args=(install)
@@ -26,4 +26,11 @@ stage = pathlib.Path(sys.argv[1])
 with tarfile.open(stage / 'source.tar.gz') as archive:
     archive.extractall(stage / 'source', filter='data')
 PY
-python3 "$stage/source/connect-core-$revision/scripts/connect-install.py" "${args[@]}"
+if [[ $EUID == 0 ]]; then
+  python3 "$stage/source/connect-core-$revision/scripts/connect-install.py" "${args[@]}"
+else
+  command -v sudo >/dev/null || { echo 'Root privileges are required; sudo is unavailable'; exit 1; }
+  # The full script/source is already in a private, seekable staging directory.
+  # Preserve the exact resolved revision and options when elevating, not stdin.
+  sudo bash "$stage/source/connect-core-$revision/scripts/install-vps.sh" "${args[@]}"
+fi

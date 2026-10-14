@@ -136,3 +136,8 @@ data server в нём остановлен, без mock responses и без host
 
 ![Светлая тема](screenshots/connect-ui-light.png)
 ![Тёмная тема](screenshots/connect-ui-dark.png)
+
+The manual configuration above retains its explicit local mode. The 0.2.1 VPS
+installer instead configures public IP HTTPS with generated credentials,
+automatic certificate renewal and external availability checks. See
+[VPS-INSTALL.md](VPS-INSTALL.md) for the current one-command installation.

@@ -3,7 +3,7 @@
 На Linux VPS с systemd и назначенным публичным IPv4 выполнить одну команду:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/main/scripts/install-vps.sh | sudo bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/main/scripts/install-vps.sh | bash
 ```
 
 Адрес сервера не зашит в скрипт. Установщик определяет IPv4/uplink, выбирает
