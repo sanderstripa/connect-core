@@ -2,6 +2,20 @@
 # Resolve the installation channel once, then build only that immutable source.
 set -euo pipefail
 [[ $(uname -s) == Linux ]] || { echo 'Run on a Linux systemd VPS'; exit 1; }
+[[ -d /run/systemd/system && -c /dev/net/tun ]] || { echo 'A running systemd VPS with /dev/net/tun is required'; exit 1; }
+packages=()
+command -v python3 >/dev/null || packages+=(python3)
+command -v tar >/dev/null || packages+=(tar)
+if [[ ${#packages[@]} -gt 0 ]]; then
+  command -v apt-get >/dev/null || { echo 'Missing python3/tar; this automatic bootstrap requires apt-get'; exit 1; }
+  privilege=()
+  if [[ $EUID != 0 ]]; then
+    command -v sudo >/dev/null || { echo 'Root privileges are required; sudo is unavailable'; exit 1; }
+    privilege=(sudo)
+  fi
+  "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get update
+  "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-upgrade --no-install-recommends "${packages[@]}"
+fi
 for command in curl python3 tar; do command -v "$command" >/dev/null || { echo "Missing dependency: $command"; exit 1; }; done
 revision=''
 args=(install)

@@ -356,7 +356,7 @@ def install(args, revision, release):
         settings['uid'] = m['uids']['connectcore']; save(JOURNAL / 'network.json', settings)
         units=unit_files()
         units['connect-ui-cert.service']='[Unit]\nDescription=Renew CONNECT public IP HTTPS certificate\nAfter=network-online.target connect-core.service\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /opt/connect-core/current/scripts/connect-install.py renew-cert\nUMask=0077\n'
-        units['connect-ui-cert.timer']='[Unit]\nDescription=Check CONNECT short-lived HTTPS certificate hourly\n\n[Timer]\nOnBootSec=5min\nOnUnitActiveSec=1h\nRandomizedDelaySec=5min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n'
+        units['connect-ui-cert.timer']='[Unit]\nDescription=Check CONNECT short-lived HTTPS certificate hourly\n\n[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=1h\nRandomizedDelaySec=5min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n'
         for name, body in units.items():
             (UNITS / name).write_text(body); (UNITS / name).chmod(0o644); m['unit_hashes'][name] = sha(UNITS / name); save(JOURNAL / 'manifest.json', m)
         run('systemctl', 'daemon-reload')
