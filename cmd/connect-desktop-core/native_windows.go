@@ -25,14 +25,15 @@ import (
 )
 
 type nativeBridge struct {
-	conn    net.Conn
-	mu      sync.Mutex
-	writing sync.Mutex
-	active  *nativeView
-	done    chan struct{}
-	ack     chan uint32
-	stats   *ipvpn.Stats
-	policy  ipvpn.Policy
+	conn      net.Conn
+	mu        sync.Mutex
+	writing   sync.Mutex
+	active    *nativeView
+	done      chan struct{}
+	ack       chan uint32
+	stats     *ipvpn.Stats
+	policy    ipvpn.Policy
+	helperPID uint32
 }
 type nativeView struct {
 	bridge      *nativeBridge
@@ -189,7 +190,13 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 		return nil, errors.New("Wintun/network setup failed; inspect or recover retained guard")
 	}
 	conn.SetDeadline(time.Time{})
-	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""]}
+	var helperPID uint32
+	if fd, ok := conn.(interface{ Fd() uintptr }); ok {
+		if err := windows.GetNamedPipeClientProcessId(windows.Handle(fd.Fd()), &helperPID); err != nil {
+			return nil, err
+		}
+	}
+	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""], helperPID: helperPID}
 	success = true
 	go b.read()
 	return b, nil

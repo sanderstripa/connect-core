@@ -19,7 +19,7 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 public sealed class CorePipe {
  public Process Process;
- public volatile uint State,Code,Mode;
+ public volatile uint State,Code,Mode,Helper;
  public ulong TX,RX,Elapsed,DNS;
  public bool Ended;
  public Task<string> Errors;
@@ -29,7 +29,7 @@ public sealed class CorePipe {
   Directory.CreateDirectory(appData);
   var info=new ProcessStartInfo(exe);info.UseShellExecute=false;info.CreateNoWindow=true;info.RedirectStandardInput=true;info.RedirectStandardOutput=true;info.RedirectStandardError=true;info.ArgumentList.Add("--ipc");info.Environment["LOCALAPPDATA"]=appData;
   Process=Process.Start(info);input=Process.StandardInput.BaseStream;
-  Task.Run(()=>{var output=Process.StandardOutput.BaseStream;try{while(true){byte[] h=Read(output,8);if(h[0]!=67||h[1]!=67||h[2]!=2||h[3]!=128||BitConverter.ToUInt32(h,4)!=176)throw new IOException("Invalid typed status");byte[] b=Read(output,176);lock(gate){Code=BitConverter.ToUInt32(b,4);TX=BitConverter.ToUInt64(b,8);RX=BitConverter.ToUInt64(b,16);Elapsed=BitConverter.ToUInt64(b,24);Mode=BitConverter.ToUInt32(b,32);DNS=BitConverter.ToUInt64(b,168);State=BitConverter.ToUInt32(b,0);}}}catch{Ended=true;}});
+  Task.Run(()=>{var output=Process.StandardOutput.BaseStream;try{while(true){byte[] h=Read(output,8);if(h[0]!=67||h[1]!=67||h[2]!=2||h[3]!=128||BitConverter.ToUInt32(h,4)!=176)throw new IOException("Invalid typed status");byte[] b=Read(output,176);lock(gate){Code=BitConverter.ToUInt32(b,4);TX=BitConverter.ToUInt64(b,8);RX=BitConverter.ToUInt64(b,16);Elapsed=BitConverter.ToUInt64(b,24);Mode=BitConverter.ToUInt32(b,32);Helper=BitConverter.ToUInt32(b,164);DNS=BitConverter.ToUInt64(b,168);State=BitConverter.ToUInt32(b,0);}}}catch{Ended=true;}});
   Errors=Process.StandardError.ReadToEndAsync();
  }
  private static byte[] Read(Stream s,int n){byte[] b=new byte[n];int at=0;while(at<n){int got=s.Read(b,at,n-at);if(got==0)throw new EndOfStreamException();at+=got;}return b;}
@@ -121,9 +121,9 @@ try{
  # Crash this session's authenticated helper while keeping Core alive. Its
  # dynamic permits must disappear and persistent deny must cover the lost TUN.
  $helperPath=(Resolve-Path (Join-Path $dist 'ConnectCoreNetwork.exe')).Path
- $helpers=@(Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq $helperPath -and $_.CommandLine -match (' '+$client.Process.Id+'$')})
- if($helpers.Count -ne 1){throw 'Owned network helper could not be identified uniquely'}
- Stop-Process -Id $helpers[0].ProcessId -Force;AwaitCore 4 10
+ if(!$client.Helper){throw 'Authenticated helper PID unavailable'}
+ $ownedHelper=[Diagnostics.Process]::GetProcessById($client.Helper);if($ownedHelper.MainModule.FileName -ne $helperPath){throw 'Authenticated helper image changed'}
+ $ownedHelper.Kill();$ownedHelper.WaitForExit();AwaitCore 4 10
  python "$PSScriptRoot/ip-lab-services.py" failure | Set-Content (Join-Path $out 'helper-failure.log');if($LASTEXITCODE){throw 'Helper crash fell back direct'}
  python "$PSScriptRoot/vm-negative-probes.py" | Set-Content (Join-Path $out 'helper-crash-probes.json');if($LASTEXITCODE){throw 'Helper crash exposed direct network'}
  $client.Send(8);AwaitCore 1 15;$client.Send(2);AwaitCore 3

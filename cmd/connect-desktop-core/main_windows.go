@@ -223,6 +223,7 @@ func (w *worker) emit() {
 	}
 	if w.native != nil {
 		mode = 1
+		binary.LittleEndian.PutUint32(p[164:], w.native.helperPID)
 	}
 	if w.code == 5 {
 		mode = 3
