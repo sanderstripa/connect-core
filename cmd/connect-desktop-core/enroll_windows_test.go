@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -28,7 +31,17 @@ func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
 	https := httptest.NewUnstartedServer(api)
 	origin := "https://" + https.Listener.Addr().String()
 	keys := filepath.Join(dir, "keys")
-	state, err := management.Bootstrap(keys, "127.0.0.1:17444", origin)
+	// Export the actual endpoint before enrollment, without editing the issued
+	// client configuration afterward. This tests the panel-to-engine contract.
+	socket, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := socket.LocalAddr().String()
+	if err = socket.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := management.Bootstrap(keys, endpoint, origin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +145,117 @@ func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
 	}
 	if _, err = os.Stat(profile + ".pending"); !os.IsNotExist(err) {
 		t.Fatal("completed pending proof retained")
+	}
+	// Use the approved certificate/address registry with PR #4's owned QUIC
+	// listener, and the unmodified DPAPI bundle from the Windows importer.
+	if err = management.ReadJSON(statePath, &state); err != nil {
+		t.Fatal(err)
+	}
+	serverTLS, err := ipvpn.TLS(state.Config, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, closeListener, err := ipvpn.Listen(endpoint, serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeListener()
+	policies, err := state.Config.Validate(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- ipvpn.Serve(ctx, listener, echoDevice{newDevice()}, policies, &ipvpn.Stats{})
+	}()
+	defer func() {
+		w.stop()
+		cancel()
+		closeListener()
+		select {
+		case err := <-serverDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("enrolled server shutdown stuck")
+		}
+	}()
+	// A VPS export intentionally needs a local DNS choice before the desktop
+	// helper can change networking. Do not invoke that helper on a test host.
+	w.connect()
+	w.mu.Lock()
+	blockedForDNS := w.state == desktop.Ready && w.code == 11
+	w.mu.Unlock()
+	if !blockedForDNS {
+		t.Fatal("managed export did not require explicit local DNS")
+	}
+	clientTLS, err := saved.tls()
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := newDevice()
+	stats := &ipvpn.Stats{}
+	events := make(chan ipvpn.Event, 16)
+	clientDone := make(chan error, 1)
+	go func() {
+		clientDone <- ipvpn.Managed(ctx, saved.Config, clientTLS, func(string) (ipvpn.Device, error) {
+			return device, nil
+		}, stats, func(e ipvpn.Event) { events <- e })
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-clientDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("enrolled managed client shutdown stuck")
+		}
+	}()
+	select {
+	case event := <-events:
+		if event.State != "authenticating" {
+			t.Fatalf("unexpected first state: %s", event.State)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("managed client did not start")
+	}
+	select {
+	case event := <-events:
+		if event.State != "ready" {
+			t.Fatalf("issued credentials rejected: %s", event.State)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("issued credentials failed to authenticate")
+	}
+	// This public-destination packet exists only in memory and encrypted
+	// loopback QUIC; neither fixture forwards to the public Internet.
+	packet := make([]byte, 28)
+	packet[0], packet[8], packet[9] = 0x45, 64, 17
+	binary.BigEndian.PutUint16(packet[2:], 28)
+	copy(packet[12:16], []byte{10, 231, 0, 2})
+	copy(packet[16:20], []byte{1, 1, 1, 1})
+	binary.BigEndian.PutUint16(packet[20:], 49152)
+	binary.BigEndian.PutUint16(packet[22:], 53)
+	binary.BigEndian.PutUint16(packet[24:], 8)
+	var sum uint32
+	for i := 0; i < 20; i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(packet[i:]))
+	}
+	for sum>>16 != 0 {
+		sum = sum&65535 + sum>>16
+	}
+	binary.BigEndian.PutUint16(packet[10:], ^uint16(sum))
+	device.packets <- packet
+	deadline = time.Now().Add(3 * time.Second)
+	for stats.ReceivedBytes.Load() != 28 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stats.SentBytes.Load() != 28 || stats.ReceivedBytes.Load() != 28 {
+		t.Fatal("issued export failed real CONNECT IP packet round trip")
 	}
 }
 

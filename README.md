@@ -20,8 +20,10 @@ application -> TUN -> CONNECT IP/2 + QUIC DATAGRAM/mTLS -> server TUN
 Run the real TUN slice using [IP lab instructions](docs/IP-LAB.md).
 Linux runs only in disposable network namespaces. Real Linux TUN TCP/UDP/DNS and
 a native Windows Wintun DNS/QUIC round trip passed in isolated CI. The Windows
-native job uses a packet fixture as its server; Windows-VM-to-Linux-VM testing
-is a separate required gate. See [validation evidence](docs/VALIDATION.md).
+native job uses a packet fixture as its server. Two additional required workflows
+exercise Windows-to-Linux VM traffic for the managed CLI and system desktop
+client. See [integration scope and safe field test](docs/INTEGRATION.md) and
+[historical validation evidence](docs/VALIDATION.md).
 No real VPS was accessed. Amsterdam and the Danish services are untouched.
 
 ## CONNECT UI
