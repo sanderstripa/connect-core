@@ -20,6 +20,7 @@ async function refresh() {
   catch (e) { snapshot = null; text('server-status', 'Неизвестно'); $('server-status').className = 'badge error'; for (const id of ['core','protocol','endpoint','transport','uptime','connections','cpu','ram','disk','rx','tx','sessions']) text(id,'—'); $('devices').replaceChildren(); for (const id of ['start','stop','restart','add']) $(id).disabled = true; text('updated', 'Состояние не подтверждено'); notice(e.message); }
 }
 function render(s) {
+  text('environment',s.environment==='managed-vps' ? 'Режим VPS · CONNECT IP v2' : 'Изолированная тестовая среда · CONNECT IP v2');
   const names = { running: 'Работает', stopped: 'Остановлен', stopping: 'Останавливается', error: 'Ошибка' };
   text('server-status', names[s.status] || 'Неизвестно'); $('server-status').className = `badge ${s.status}`;
   text('core', s.core_version); text('protocol', `CONNECT IP v${s.protocol_version}`); text('endpoint', s.endpoint); text('transport', s.transport);
@@ -57,6 +58,7 @@ function showDevice(d) {
   paragraph(body,'Закрытый ключ остаётся на устройстве: device-key.pem. Экспорт содержит только совместимый JSON и пути к локальным файлам. Для исходных устройств используйте их оригинальный сертификат.','field-note');
 }
 async function enrollment() {
+  if (snapshot?.onboarding_enabled) { invitation(); return; }
   const data = await api('/api/challenge'), body = dialog('Добавить устройство');
   paragraph(body,'Сначала проверьте владельца устройства вне панели и отпечаток его сертификата. Сертификат выпускается доверенным CA вне панели; новый CSR с этим challenge подтверждает владение закрытым ключом. Challenge действует 5 минут.','muted');
   const challenge = field(body,'Challenge для CN нового CSR',data.challenge); challenge.readOnly = true;
@@ -65,13 +67,29 @@ async function enrollment() {
   const label = document.createElement('label'), verified = document.createElement('input'); verified.type = 'checkbox'; verified.style.width = 'auto'; label.append(verified, document.createTextNode(' Я проверил владельца устройства и отпечаток сертификата')); body.append(label);
   action(body,'Проверить и добавить',async()=> { if (!verified.checked) throw new Error('Подтвердите проверку устройства'); await api('/api/enroll',{name:name.value,ip:ip.value,csr:csr.value,certificate:cert.value,challenge:data.challenge}); $('dialog').close(); await refresh(); },true);
 }
+function invitation() {
+ const used=new Set((snapshot?.devices||[]).filter(d=>d.access==='enabled').map(d=>d.ip)),base=snapshot?.device_network?.split('/')[0].split('.').slice(0,3).join('.');let suggested='';if(base){for(let n=2;n<255;n++){if(!used.has(`${base}.${n}`)){suggested=`${base}.${n}`;break;}}}
+ const body=dialog('Доступ по одноразовой ссылке'),name=field(body,'Название устройства'),ip=field(body,'Назначенный IPv4',suggested);
+ paragraph(body,'Ссылка действует 15 минут и выдаётся один раз. Клиент создаст ключ на устройстве. После сравнения отпечатка подтвердите регистрацию в панели.','field-note');
+ action(body,'Выпустить ссылку',async()=>{const v=await api('/api/invite',{name:name.value,ip:ip.value});const out=dialog('Приглашение CONNECT');const link=field(out,'connect:// — передайте только нужному владельцу',v.link,true);link.readOnly=true;const img=document.createElement('img');img.src='data:image/png;base64,'+v.qr_png;img.alt='QR одноразового приглашения CONNECT';img.width=280;img.height=280;out.append(img);action(out,'Копировать ссылку',async()=>{await navigator.clipboard.writeText(v.link);notice('Ссылка скопирована');});paragraph(out,'Импорт на устройстве: connect-core import-link NEW_DIRECTORY, затем передайте ссылку через stdin. Закрытый ключ не входит в ссылку или QR. Клиент покажет отпечаток для сравнения.','field-note');},true);
+}
+async function registrations() {
+ const list=await api('/api/registrations'),body=dialog('Регистрации устройств');if(!list.length){paragraph(body,'Запросов регистрации пока нет.');return;}
+ for(const v of list.sort((a,b)=>a.name.localeCompare(b.name))){const section=document.createElement('section');section.className='registration';body.append(section);paragraph(section,`${v.name} · ${v.ip} · ${v.status}`);paragraph(section,`Действует до ${new Date(v.expires).toLocaleString('ru-RU')}`,'field-note');if(v.status==='pending' || v.status==='issuing'){paragraph(section,`Публичный ключ: ${v.fingerprint}`,'mono');const fp=field(section,'Введите отпечаток, полученный с клиентского устройства');action(section,'Подтвердить устройство',async()=>{await api('/api/registration',{id:v.id,action:'approve',fingerprint:fp.value.trim(),confirm:true});await registrations();await refresh();},true);}if(v.status==='invited'||v.status==='pending'){action(section,'Отменить приглашение',async()=>{await api('/api/registration',{id:v.id,action:'cancel',confirm:true});await registrations();});}}
+}
 function settings() {
   if (!snapshot) { notice('Сначала получите подтверждённое состояние ядра'); return; }
-  const body = dialog('Настройки'), endpoint = field(body,'IP-адрес и порт',snapshot.endpoint), iface = field(body,'Сетевой интерфейс',snapshot.interface), destinations = field(body,'Разрешённые сети — одна на строку',snapshot.destinations.join('\n'),true);
+  const body = dialog('Настройки');
+  if(snapshot.environment==='managed-vps'){
+   paragraph(body,`${snapshot.endpoint} · ${snapshot.interface} · ${snapshot.device_network}`);
+   paragraph(body,'Сеть принадлежит установщику. Изменение её параметров требует отдельной проверенной настройки, чтобы не затронуть соседние VPN.','field-note');
+  }else{
+  const endpoint = field(body,'IP-адрес и порт',snapshot.endpoint), iface = field(body,'Сетевой интерфейс',snapshot.interface), destinations = field(body,'Разрешённые сети — одна на строку',snapshot.destinations.join('\n'),true);
   paragraph(body,'Сетевые параметры можно сохранить только после остановки сервера. Действуют ограничения изолированной лаборатории: частные IPv4 и сети /24 или уже.','field-note');
   action(body,'Сохранить сетевые параметры',async()=> {await api('/api/settings',{endpoint:endpoint.value,interface:iface.value,destinations:destinations.value.split('\n').map(s=>s.trim()).filter(Boolean)}); $('dialog').close(); await refresh();},true);
+  }
   paragraph(body,'Авторизация: администратор, сессии 8 часов, 5 попыток входа в минуту. Пароль меняется локально: connect-ui password ui.json, затем перезапуск панели.','field-note');
-  paragraph(body,'Журнал: последние 100 событий управления, без секретов, в памяти. Ядро не поддерживает уровни журналирования и безопасное автообновление; эти настройки недоступны. Обновление выполняется вручную из проверенного исходного кода.','field-note');
+  paragraph(body,'Журнал: последние 100 событий управления, без секретов, в памяти. Уровни журналирования и безопасное автообновление из браузера недоступны. Для VPS есть отдельная команда обновления с проверкой и откатом.','field-note');
   action(body,'Сменить тему',async()=>setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 }
 $('login-form').onsubmit = async e => { e.preventDefault(); try { const s = await api('/auth/login',{username:$('username').value,password:$('password').value}); csrf=s.csrf; text('login-error',''); signedIn(); await refresh(); } catch (error) { text('login-error',error.message); } };
@@ -80,28 +98,10 @@ $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === '
 $('logout').onclick = async () => { try { await api('/auth/logout',{}); signedOut(); } catch(e) { notice(e.message); } };
 $('close-dialog').onclick = () => $('dialog').close();
 $('settings').onclick = settings;
+$('registrations').onclick = ()=>registrations().catch(e=>notice(e.message));
 $('add').onclick = () => enrollment().catch(e=>notice(e.message));
 $('logs').onclick = async () => { try { const events = await api('/api/logs'), body=dialog('Журнал управления'), pre=document.createElement('pre'); pre.textContent=events.length ? events.join('\n') : 'Событий пока нет'; body.append(pre); } catch(e) {notice(e.message);} };
 $('start').onclick = async () => { if (pending) return; pending=true; try {await api('/api/server',{action:'start'});await refresh();} catch(e) {await refresh();notice(e.message);} finally {pending=false;} };
 for (const id of ['stop','restart']) $(id).onclick = () => confirmAction(id==='stop' ? 'Остановить сервер?' : 'Перезапустить сервер?', 'Все активные подключения будут закрыты.',()=>api('/api/server',{action:id,confirm:true}));
 (async()=> { try { const s=await api('/auth/session');csrf=s.csrf;signedIn();await refresh(); } catch { signedOut(); } })();
 setInterval(()=> {if(csrf && !pending && !$('dialog').open) refresh();},5000);
-
-$('invite').onclick = () => {
-  const body = dialog('Одноразовый доступ'), name = field(body,'Название устройства'), ip = field(body,'Назначенный IPv4');
-  const note = document.createElement('p'); note.textContent = 'Передайте приглашение только владельцу устройства. Оно действует 5 минут и используется один раз. Windows-клиент создаёт закрытый ключ у себя; панель его не получает.'; body.append(note);
-  const create = document.createElement('button'); create.textContent = 'Выдать приглашение'; body.append(create);
-  create.onclick = async () => {
-    create.disabled = true;
-    try {
-      const result = await api('/api/invitation',{name:name.value,ip:ip.value});
-      const link = field(body,'connect://',result.link,true); link.readOnly = true;
-      const res = await fetch('/api/invitation-qr',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Connect-UI':'1','X-CSRF-Token':csrf},body:JSON.stringify({link:result.link})});
-      if(!res.ok) throw new Error('Не удалось создать QR');
-      const bitmap = await createImageBitmap(await res.blob()), canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height; canvas.style.maxWidth = '100%'; canvas.getContext('2d').drawImage(bitmap,0,0); bitmap.close(); body.append(canvas);
-      const copy=document.createElement('button');copy.textContent='Копировать ссылку';copy.onclick=()=>navigator.clipboard.writeText(result.link).catch(()=>{link.focus();link.select();});body.append(copy);
-      const download=document.createElement('button');download.textContent='Сохранить QR';download.onclick=()=>canvas.toBlob(blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='connect-invitation.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});body.append(download);
-      create.remove(); note.textContent='Приглашение выдано. После регистрации устройство появится в общем списке. Потерянный ответ требует нового приглашения; токен повторно не используется.';
-    }catch(e){notice(e.message);create.disabled=false;}
-  };
-};

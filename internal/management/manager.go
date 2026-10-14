@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -71,6 +72,19 @@ func (m *Manager) event(s string) {
 		m.events = m.events[len(m.events)-100:]
 	}
 }
+func (m *Manager) UseOwnedTUN() error {
+	if m.state.Config.Environment != "managed-vps" || m.state.Config.Interface != "cc-vps0" {
+		return errors.New("managed VPS installer configuration required")
+	}
+	m.open = ipvpn.OpenOwned
+	return nil
+}
+func (m *Manager) CheckTLS() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, e := ipvpn.TLS(m.state.Config, true)
+	return e
+}
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -113,6 +127,9 @@ func (m *Manager) Start() error {
 		_ = pc.Close()
 		m.status = "error"
 		m.event("start failed: isolated TUN")
+		if m.state.Config.Environment == "managed-vps" {
+			return fmt.Errorf("installer-owned TUN unavailable: %w", e)
+		}
 		return errors.New("isolated TUN unavailable; check lab namespace and permissions")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,7 +199,7 @@ func (m *Manager) Snapshot() map[string]any {
 	if m.status == "running" || m.status == "stopping" {
 		uptime = int64(time.Since(m.started).Seconds())
 	}
-	return map[string]any{"api_version": APIVersion, "core_version": Version, "protocol_version": 2, "transport": "QUIC DATAGRAM / TLS 1.3 mTLS", "status": m.status, "endpoint": m.state.Config.Endpoint, "interface": m.state.Config.Interface, "destinations": m.state.Config.Destinations, "uptime_seconds": uptime, "active_sessions": active, "received_bytes": rx, "sent_bytes": tx, "devices": devices, "metrics": SystemMetrics(), "capabilities": map[string]bool{"hot_revocation": true, "csr_enrollment": true, "qr_import": false, "core_update": false}}
+	return map[string]any{"environment": m.state.Config.Environment, "device_network": m.state.Config.DeviceNetwork, "api_version": APIVersion, "core_version": Version, "protocol_version": 2, "transport": "QUIC DATAGRAM / TLS 1.3 mTLS", "status": m.status, "endpoint": m.state.Config.Endpoint, "interface": m.state.Config.Interface, "destinations": m.state.Config.Destinations, "uptime_seconds": uptime, "active_sessions": active, "received_bytes": rx, "sent_bytes": tx, "devices": devices, "metrics": SystemMetrics(), "capabilities": map[string]bool{"hot_revocation": true, "csr_enrollment": true, "qr_import": false, "core_update": false}}
 }
 func clone(s State) State {
 	out := s
@@ -229,6 +246,9 @@ func (m *Manager) Change(id, action, name string) error {
 		return errors.New("unsupported device action")
 	}
 	next.Devices[id] = d
+	if action != "rename" {
+		delete(next.Config.Clients, id)
+	}
 	if e := WriteJSON(m.path, next); e != nil { // Fail closed even if fsync outcome is ambiguous.
 		if action != "rename" {
 			m.control.Deny(id)
@@ -252,6 +272,9 @@ type Settings struct {
 func (m *Manager) Configure(s Settings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.state.Config.Environment == "managed-vps" {
+		return errors.New("VPS network is installer-owned; change it through a reviewed installer transaction")
+	}
 	if m.done != nil {
 		return errors.New("stop server before changing network settings")
 	}

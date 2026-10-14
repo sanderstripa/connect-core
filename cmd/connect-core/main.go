@@ -17,6 +17,8 @@ import (
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"
+	"github.com/sanderstripa/connect-core/internal/onboarding"
+	"strings"
 )
 
 func main() {
@@ -29,6 +31,43 @@ func run() error {
 		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
+	if mode == "import-link" {
+		fmt.Fprintln(os.Stderr, "Paste connect:// invitation via stdin (not a command argument):")
+		b, e := io.ReadAll(io.LimitReader(os.Stdin, 4097))
+		if e != nil {
+			return e
+		}
+		link := strings.TrimSpace(string(b))
+		var client *onboarding.Client
+		if _, e = os.Stat(path); os.IsNotExist(e) {
+			client, e = onboarding.NewClient(link, path)
+		} else {
+			client, e = onboarding.ResumeClient(link, path)
+		}
+		if e != nil {
+			return e
+		}
+		fmt.Printf("Compare this device key fingerprint with the panel before approval:\n%s\n", client.Fingerprint())
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+		for {
+			ready, e := client.Poll(ctx)
+			if e != nil {
+				return e
+			}
+			if ready {
+				fmt.Println("Registered. Private key stayed local. Configuration: connect-ip-client.json")
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("registration waiting ended; resume with the same directory and invitation")
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}
 	if mode == "init-lab" || mode == "init-enrollment-lab" {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			return fmt.Errorf("choose a new lab directory")
@@ -37,11 +76,13 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		generate := lab.Generate
+		var s, c core.Config
+		var err error
 		if mode == "init-enrollment-lab" {
-			generate = lab.GenerateIssuance
+			s, c, err = lab.GenerateIssuance(absolute)
+		} else {
+			s, c, err = lab.Generate(absolute)
 		}
-		s, c, err := generate(absolute)
 		if err != nil {
 			return err
 		}

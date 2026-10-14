@@ -3,7 +3,6 @@ package management
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"github.com/sanderstripa/connect-core/internal/access"
 	"io"
 	"net/http"
 	"strings"
@@ -13,19 +12,11 @@ import (
 
 type API struct {
 	Manager    *Manager
+	Broker     *Broker
 	Token      string
 	Host       string
 	mu         sync.Mutex
 	challenges map[string]time.Time
-	Issuance   *Issuance
-}
-
-func (a *API) snapshot() map[string]any {
-	s := a.Manager.Snapshot()
-	capabilities := s["capabilities"].(map[string]bool)
-	capabilities["automatic_issuance"] = a.Issuance != nil
-	capabilities["qr_import"] = a.Issuance != nil
-	return s
 }
 
 func JSON(w http.ResponseWriter, status int, v any) {
@@ -56,7 +47,20 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch r.URL.Path {
 		case "/v1/status":
-			JSON(w, 200, a.snapshot())
+			s := a.Manager.Snapshot()
+			s["onboarding_enabled"] = a.Broker != nil
+			caps := s["capabilities"].(map[string]bool)
+			caps["qr_import"] = a.Broker != nil
+			caps["link_import"] = a.Broker != nil
+			caps["managed_issuance"] = a.Broker != nil
+			JSON(w, 200, s)
+			return
+		case "/v1/registrations":
+			if a.Broker == nil {
+				JSON(w, 200, []Invitation{})
+				return
+			}
+			JSON(w, 200, a.Broker.List())
 			return
 		case "/v1/logs":
 			JSON(w, 200, a.Manager.Logs())
@@ -115,9 +119,9 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" {
 		switch r.URL.Path {
-		case "/v1/invitation":
-			if a.Issuance == nil {
-				JSON(w, 409, map[string]string{"error": "automatic issuance is not configured"})
+		case "/v1/invite":
+			if a.Broker == nil {
+				JSON(w, 409, map[string]string{"error": "configure managed CA and HTTPS enrollment first"})
 				return
 			}
 			var v struct {
@@ -128,28 +132,43 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				JSON(w, 400, map[string]string{"error": "invalid invitation"})
 				return
 			}
-			link, e := a.Issuance.Invite(v.Name, v.IP)
+			result, e := a.Broker.Create(v.Name, v.IP)
 			if e != nil {
 				fail(e)
 				return
 			}
-			JSON(w, 200, map[string]any{"link": link, "expires_in": 300})
+			JSON(w, 200, result)
 			return
-		case "/v1/invitation-qr":
+		case "/v1/registration":
+			if a.Broker == nil {
+				JSON(w, 409, map[string]string{"error": "onboarding unavailable"})
+				return
+			}
 			var v struct {
-				Link string `json:"link"`
+				ID          string `json:"id"`
+				Action      string `json:"action"`
+				Fingerprint string `json:"fingerprint"`
+				Confirm     bool   `json:"confirm"`
 			}
-			if Decode(w, r, &v) != nil {
-				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+			if Decode(w, r, &v) != nil || !v.Confirm {
+				JSON(w, 400, map[string]string{"error": "confirmation required"})
 				return
 			}
-			png, e := access.QR(v.Link)
+			var e error
+			switch v.Action {
+			case "approve":
+				e = a.Broker.Approve(v.ID, v.Fingerprint)
+			case "cancel":
+				e = a.Broker.Cancel(v.ID)
+			default:
+				JSON(w, 400, map[string]string{"error": "invalid action"})
+				return
+			}
 			if e != nil {
-				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+				fail(e)
 				return
 			}
-			w.Header().Set("Content-Type", "image/png")
-			w.Write(png)
+			JSON(w, 200, map[string]bool{"ok": true})
 			return
 		case "/v1/server":
 			var v struct {
@@ -181,7 +200,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fail(e)
 				return
 			}
-			JSON(w, 200, a.snapshot())
+			JSON(w, 200, a.Manager.Snapshot())
 			return
 		case "/v1/device":
 			var v struct {

@@ -13,15 +13,16 @@ import (
 )
 
 type Config struct {
-	Version      int               `json:"config_version"`
-	Environment  string            `json:"environment"`
-	Endpoint     string            `json:"endpoint"`
-	Interface    string            `json:"interface"`
-	DeviceIP     string            `json:"device_ip,omitempty"`
-	Clients      map[string]string `json:"clients,omitempty"` // Certificate SHA-256 -> assigned IPv4.
-	Destinations []string          `json:"destinations"`
-	Trust        core.Config       `json:"trust"`
-	Network      *NetworkPolicy    `json:"network,omitempty"`
+	Version       int               `json:"config_version"`
+	Environment   string            `json:"environment"`
+	Endpoint      string            `json:"endpoint"`
+	Interface     string            `json:"interface"`
+	DeviceIP      string            `json:"device_ip,omitempty"`
+	DeviceNetwork string            `json:"device_network,omitempty"`
+	Clients       map[string]string `json:"clients,omitempty"` // Certificate SHA-256 -> assigned IPv4.
+	Destinations  []string          `json:"destinations"`
+	Trust         core.Config       `json:"trust"`
+	Network       *NetworkPolicy    `json:"network,omitempty"`
 }
 
 // Optional local OS policy, preserving the existing CONNECT IP v2 wire format.
@@ -57,8 +58,9 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c Config) Validate(server bool) (map[string]Policy, error) {
-	if c.Version != 2 || c.Environment != "isolated-lab" {
-		return nil, errors.New("requires config_version 2 and environment isolated-lab")
+	vps := c.Environment == "managed-vps"
+	if c.Version != 2 || (!vps && c.Environment != "isolated-lab") {
+		return nil, errors.New("requires config_version 2 and isolated-lab or managed-vps")
 	}
 	system := c.Network != nil
 	if system {
@@ -71,7 +73,7 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		}
 	}
 	ap, e := netip.ParseAddrPort(c.Endpoint)
-	if e != nil || !ap.Addr().Is4() || ap.Port() == 0 || !(ap.Addr().IsLoopback() || ap.Addr().IsPrivate() || system && unicast(ap.Addr())) {
+	if e != nil || !ap.Addr().Is4() || ap.Port() == 0 || !(ap.Addr().IsLoopback() || ap.Addr().IsPrivate() || (system || vps) && unicast(ap.Addr())) {
 		return nil, errors.New("numeric loopback/private IPv4 lab endpoint required")
 	}
 	if system && netip.MustParseAddr(c.Network.DNS) == ap.Addr() {
@@ -89,13 +91,20 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		return nil, errors.New("requires 1..32 destination CIDRs")
 	}
 	var prefixes []netip.Prefix
+	var pool netip.Prefix
+	if vps {
+		pool, e = netip.ParsePrefix(c.DeviceNetwork)
+		if e != nil || !pool.Addr().Is4() || !pool.Addr().IsPrivate() || pool.Bits() != 24 || pool != pool.Masked() {
+			return nil, errors.New("managed VPS requires a canonical private device /24")
+		}
+	}
 	for _, s := range c.Destinations {
 		p, e := netip.ParsePrefix(s)
 		// Narrow private lab networks only: prevent accidental internet/open forwarding.
-		if e != nil || !p.Addr().Is4() || (!system && (!p.Addr().IsPrivate() || p.Bits() < 24)) || p != p.Masked() {
+		if e != nil || !p.Addr().Is4() || (!system && !vps && (!p.Addr().IsPrivate() || p.Bits() < 24)) || p != p.Masked() {
 			return nil, errors.New("destinations require canonical private IPv4 /24 or narrower")
 		}
-		if !system && p.Contains(ap.Addr()) {
+		if !system && !vps && p.Contains(ap.Addr()) {
 			return nil, errors.New("endpoint must be outside destination policy")
 		}
 		prefixes = append(prefixes, p)
@@ -107,6 +116,12 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		if e != nil || !ip.Is4() || !ip.IsPrivate() || !unicast(ip) {
 			return errors.New("private unicast device IPv4 required")
 		}
+		if vps {
+			raw := ip.As4()
+			if !pool.Contains(ip) || raw[3] < 2 || raw[3] == 255 {
+				return errors.New("device IP must be a usable address .2..254 in the VPS pool")
+			}
+		}
 		if used[ip] || ip == ap.Addr() {
 			return errors.New("duplicate device/endpoint IP")
 		}
@@ -114,7 +129,7 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 			return errors.New("device address must differ from tunnel DNS")
 		}
 		for _, p := range prefixes {
-			if system {
+			if system || vps {
 				continue
 			}
 			if p.Contains(ip) {
@@ -126,8 +141,8 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		return nil
 	}
 	if server {
-		if len(c.Clients) < 1 || len(c.Clients) > 32 {
-			return nil, errors.New("requires 1..32 certificate/address bindings")
+		if len(c.Clients) > 32 {
+			return nil, errors.New("at most 32 certificate/address bindings")
 		}
 		for pin, ip := range c.Clients {
 			b, e := hex.DecodeString(pin)

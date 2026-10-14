@@ -103,7 +103,7 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	errJSON := func(code int, s string) { management.JSON(w, code, map[string]string{"error": s}) }
 	if r.Host != p.host {
 		errJSON(403, "invalid host")
@@ -227,7 +227,7 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
-	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings" || path == "/api/invitation" || path == "/api/invitation-qr")
+	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || path == "/api/registrations" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings" || path == "/api/invite" || path == "/api/registration")
 	if !allowed {
 		errJSON(404, "unsupported route or method")
 		return

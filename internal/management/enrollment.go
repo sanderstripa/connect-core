@@ -30,6 +30,9 @@ func (m *Manager) enrollLocked(e Enrollment) (string, error) {
 	if len(e.Name) < 1 || len(e.Name) > 80 {
 		return "", errors.New("invalid device name")
 	}
+	if len(m.state.Devices) >= 256 {
+		return "", errors.New("certificate history full; rotate the authority through a reviewed maintenance procedure")
+	}
 	cb, rest := pem.Decode([]byte(e.Certificate))
 	if cb == nil || cb.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
 		return "", errors.New("one leaf certificate required")
