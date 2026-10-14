@@ -96,7 +96,7 @@ void prepareEndpoint(const Plan& p){
 }
 void configure(const Plan& p){
  stage=6;
- MIB_IPINTERFACE_ROW row{};InitializeIpInterfaceEntry(&row);row.Family=AF_INET;row.InterfaceLuid=luid;check(GetIpInterfaceEntry(&row));row.NlMtu=Mtu;row.UseAutomaticMetric=FALSE;row.Metric=0;row.DadTransmits=0;row.RouterDiscoveryBehavior=RouterDiscoveryDisabled;check(SetIpInterfaceEntry(&row));
+ MIB_IPINTERFACE_ROW row{};InitializeIpInterfaceEntry(&row);row.Family=AF_INET;row.InterfaceLuid=luid;check(GetIpInterfaceEntry(&row));row.SitePrefixLength=0;row.NlMtu=Mtu;row.UseAutomaticMetric=FALSE;row.Metric=0;row.DadTransmits=0;row.RouterDiscoveryBehavior=RouterDiscoveryDisabled;check(SetIpInterfaceEntry(&row));
  MIB_UNICASTIPADDRESS_ROW address{};InitializeUnicastIpAddressEntry(&address);address.InterfaceLuid=luid;address.Address=ipv4(p.device);address.OnLinkPrefixLength=32;address.PrefixOrigin=IpPrefixOriginManual;address.SuffixOrigin=IpSuffixOriginManual;address.ValidLifetime=INFINITE;address.PreferredLifetime=INFINITE;address.DadState=IpDadStatePreferred;check(CreateUnicastIpAddressEntry(&address));
  for(int i=0;i<100;++i){auto current=address;if(GetUnicastIpAddressEntry(&current)==ERROR_SUCCESS&&current.DadState==IpDadStatePreferred)break;if(i==99)throw DWORD(ERROR_TIMEOUT);Sleep(50);}
  stage=7;wchar_t dns[32];InetNtopW(AF_INET,const_cast<uint32_t*>(&p.dns),dns,32);DNS_INTERFACE_SETTINGS settings{};settings.Version=DNS_INTERFACE_SETTINGS_VERSION1;settings.Flags=DNS_SETTING_NAMESERVER|DNS_SETTING_REGISTRATION_ENABLED|DNS_SETTINGS_ENABLE_LLMNR;settings.NameServer=dns;settings.RegistrationEnabled=FALSE;settings.EnableLLMNR=FALSE;check(SetInterfaceDnsSettings(adapterGuid,&settings));
