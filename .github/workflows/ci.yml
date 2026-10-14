@@ -36,6 +36,8 @@ jobs:
       - run: go build -o bin/connect-core ./cmd/connect-core
       - run: go build -o bin/connect-control ./cmd/connect-control
       - run: go build -o bin/connect-ui ./cmd/connect-ui
+      - run: go test -c -o bin/ipvpn-native.test ./internal/ipvpn
+      - run: sudo env CONNECT_LAB_NATIVE_TUN_TEST=1 bash scripts/tun-startup-linux.sh
       - run: sudo env CONNECT_LAB_ARTIFACTS="$PWD/ip-lab-artifacts" bash scripts/ip-lab-linux.sh
       - run: sudo env CONNECT_LAB_MANAGED=1 CONNECT_LAB_ARTIFACTS="$PWD/managed-lab-artifacts" bash scripts/ip-lab-linux.sh
       - uses: actions/upload-artifact@v4

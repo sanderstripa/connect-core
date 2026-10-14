@@ -14,6 +14,15 @@ ip-client-managed/ip-client-reconnect. The shared guest retains desktop TUN
 diagnostics, underlay capture, default-drop policy and separate console channel.
 Windows worker/helper code and protocol validation from PR #2 are unchanged.
 
+An integrated VM restart exposed a real startup race: an already reconnecting
+client could write to the newly created Linux TUN before the harness set it UP.
+Linux rejected that write; the server exited and removed the interface while
+the guest was configuring it. Namespace-only Open now sets its own newly
+created TUN UP before returning. It still creates no addresses/routes/DNS or
+firewall rules. OpenOwned leaves the installer's persistent interface untouched.
+The failed run and successful reruns must remain disclosed in the final report;
+server-restart and fail-closed gates are not skipped or weakened.
+
 The desktop binary IPC and managed CLI JSON-lines IPC are separate interfaces.
 The CI-only route/DNS/firewall journal helper is not substituted for the desktop
 WFP helper. Both test suites remain required. The wire protocol stays CONNECT

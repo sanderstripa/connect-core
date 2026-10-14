@@ -59,6 +59,17 @@ func openLinux(name string, owned bool) (Device, error) {
 	if e = unix.IoctlIfreq(socket, unix.SIOCSIFMTU, req); e != nil {
 		return fail(e)
 	}
+	// A reconnecting peer can send immediately after the server authenticates
+	// it. Linux returns EIO when a packet is written to a DOWN TUN, so make our
+	// newly created namespace-only device writable before publishing it. Address
+	// assignment, routes, DNS and firewall remain the harness's responsibility.
+	if e = unix.IoctlIfreq(socket, unix.SIOCGIFFLAGS, req); e != nil {
+		return fail(e)
+	}
+	req.SetUint16(req.Uint16() | unix.IFF_UP)
+	if e = unix.IoctlIfreq(socket, unix.SIOCSIFFLAGS, req); e != nil {
+		return fail(e)
+	}
 	// Register with Go's poller only after TUNSETIFF: an unattached /dev/net/tun
 	// descriptor cannot yet be polled, causing os.NewFile to disable netpoll.
 	return os.NewFile(uintptr(fd), "connect-ip-tun"), nil
