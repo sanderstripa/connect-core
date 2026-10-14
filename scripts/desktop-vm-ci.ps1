@@ -59,7 +59,7 @@ try{
  pktmon start --capture --comp $components --pkt-size 0 --file-name (Join-Path $out 'physical.etl') | Out-Null
  if($LASTEXITCODE){throw 'NIC capture failed'};$capture=$true
  # Establish that this selected physical capture sees real pre-VPN traffic.
- Invoke-WebRequest 'https://api.github.com/repos/sanderstripa/connect-core' -Headers @{'User-Agent'='CONNECT-Core-CI'} -OutFile (Join-Path $out 'capture-baseline.json')
+ Invoke-WebRequest 'https://www.wintun.net/' -TimeoutSec 30 -OutFile (Join-Path $out 'capture-baseline.html')
  $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
  foreach($field in 'ca','cert','key'){$cfg.trust.$field=Join-Path $boot ('lab/'+[IO.Path]::GetFileName($cfg.trust.$field))}
  $cfg.destinations=@('0.0.0.0/0');$cfg | Add-Member -NotePropertyName network -NotePropertyValue ([pscustomobject]@{mode='system-vpn';dns='10.232.0.1'})
