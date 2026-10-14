@@ -5,8 +5,8 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 # Bind control to the actual UART after devtmpfs replaces the exported /dev.
 # PID1's inherited console input is not a reliable bidirectional control channel.
-exec </dev/ttyS0 >/dev/ttyS0 2>&1
-stty -echo -icanon min 1 time 0
+exec </dev/ttyS1 >/dev/ttyS1 2>&1
+stty 115200 -echo -icanon min 1 time 0
 mkdir -p /run /artifacts /dev/net
 grep -q 'connect_lab_vm=1' /proc/cmdline || { echo 'LAB_REFUSED'; exec poweroff -f; }
 modprobe virtio_pci || true
@@ -87,7 +87,10 @@ s=(p/'stat').read_text().split(); rss=next(x.split()[1] for x in (p/'status').re
 print('LAB_LINUX_METRICS '+json.dumps({'cpu_seconds':(int(s[13])+int(s[14]))/os.sysconf('SC_CLK_TCK'),'rss_KiB':int(rss)}),flush=True)
 PY
   ;;
-  capture) kill -INT "$capture"; wait "$capture" 2>/dev/null || true; echo LAB_PCAP_BEGIN; base64 /artifacts/underlay.pcap; echo LAB_PCAP_END ;;
+  capture)
+   if [ "$capture" -ne 0 ]; then kill -INT "$capture" 2>/dev/null || true; wait "$capture" 2>/dev/null || true; capture=0; fi
+   printf 'LAB_PCAP_SHA256 '; sha256sum /artifacts/underlay.pcap | cut -d ' ' -f 1
+   echo LAB_PCAP_BEGIN; base64 /artifacts/underlay.pcap; echo LAB_PCAP_END ;;
   shutdown) poweroff -f ;;
  esac
 done

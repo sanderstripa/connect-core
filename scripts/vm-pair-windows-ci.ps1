@@ -50,6 +50,15 @@ function Await-Line($record,[string]$pattern,[int]$seconds=60){
  throw ("Timed out waiting for $pattern; last output: " + ($record.history | Select-Object -Last 12 | Out-String))
 }
 function Clear-Lines($record){Pump $record;$record.lines.Clear()}
+function Receive-LabCapture($record,[string]$path){
+ Clear-Lines $record;$record.writer.WriteLine('capture');Await-Line $record '^LAB_PCAP_END$' 180
+ $begin=$record.lines.IndexOf('LAB_PCAP_BEGIN');$end=$record.lines.IndexOf('LAB_PCAP_END')
+ if($begin -lt 0 -or $end -le $begin){throw 'Invalid guest capture framing'}
+ $bytes=[Convert]::FromBase64String(($record.lines.GetRange($begin+1,$end-$begin-1) -join ''))
+ $hashLine=@($record.lines | Where-Object {$_ -match '^LAB_PCAP_SHA256 [0-9a-f]{64}$'})
+ if($hashLine.Count -ne 1 -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLower() -ne $hashLine[0].Substring(16)){throw 'Guest capture digest mismatch'}
+ [IO.File]::WriteAllBytes($path,$bytes)
+}
 $vm=$null;$client=$null;$badProcess=$null;$serialListener=$null;$serialPeer=$null;$captureStarted=$false;$captureError=$null;$captureComponents=@();$checksPassed=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
 $env:CONNECT_IP_LAB_VM='1'
 $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
@@ -62,7 +71,7 @@ try{
  # its restrict mode cannot carry UDP replies (see VM-PAIR.md).
  $serialListener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,17445);$serialListener.Start()
  $accept=$serialListener.AcceptTcpClientAsync()
- $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-chardev','socket,id=control,host=127.0.0.1,port=17445','-serial','chardev:control','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
+ $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-chardev','socket,id=control,host=127.0.0.1,port=17445','-serial',('file:'+(Join-Path $out 'linux-kernel.log')),'-serial','chardev:control','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
  if(-not $accept.Wait(10000)){throw 'QEMU serial controller did not connect'}
  $serialPeer=$accept.GetAwaiter().GetResult();$serialListener.Stop()
  $vm.reader=[IO.StreamReader]::new($serialPeer.GetStream())
@@ -154,9 +163,7 @@ try{
  python "$PSScriptRoot/vm-negative-probes.py" | Tee-Object -FilePath (Join-Path $out 'crash-negative-probes.log')
  if($LASTEXITCODE -ne 0){throw 'Crash guard failed'}
  Write-Output 'LAB_CORE_CRASH_GUARD_PASSED'
- Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
- $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
- [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
+ Receive-LabCapture $vm (Join-Path $out 'linux-underlay.pcap')
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'capture-verification.json')
  if($LASTEXITCODE -ne 0){throw 'Linux underlay capture leak check failed'}
  $checksPassed=$true
@@ -165,9 +172,7 @@ try{
   if($vm -and -not $vm.process.HasExited -and -not (Test-Path (Join-Path $out 'linux-underlay.pcap'))){
    try{
     Clear-Lines $vm;$vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 10
-    Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
-    $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
-    [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
+    Receive-LabCapture $vm (Join-Path $out 'linux-underlay.pcap')
    }catch{Write-Warning ('Failure capture unavailable: '+$_.Exception.Message)}
   }
   if($captureStarted){

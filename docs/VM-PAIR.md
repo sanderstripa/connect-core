@@ -30,6 +30,9 @@ by the harness; no Core control API is exposed there. The loopback firewall plan
 preserves that exact TCP control port. Other endpoint TCP ports remain blocked.
 Connected hidden Windows interfaces that cannot be addressed by the helper cause
 setup refusal rather than silently weakening service egress guards.
+Kernel console and serial evidence use separate UARTs so kernel messages cannot
+corrupt packet export. The received PCAP must match the guest's SHA-256 digest;
+capture retrieval is repeatable after tcpdump stops.
 
 Linux moves its disposable virtual NIC into an `edge` namespace. A separate
 `service` namespace provides HTTP, TCP binary echo, UDP echo and DNS at
