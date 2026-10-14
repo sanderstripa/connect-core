@@ -20,6 +20,14 @@ type API struct {
 	Issuance   *Issuance
 }
 
+func (a *API) snapshot() map[string]any {
+	s := a.Manager.Snapshot()
+	capabilities := s["capabilities"].(map[string]bool)
+	capabilities["automatic_issuance"] = a.Issuance != nil
+	capabilities["qr_import"] = a.Issuance != nil
+	return s
+}
+
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -48,7 +56,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch r.URL.Path {
 		case "/v1/status":
-			JSON(w, 200, a.Manager.Snapshot())
+			JSON(w, 200, a.snapshot())
 			return
 		case "/v1/logs":
 			JSON(w, 200, a.Manager.Logs())
@@ -173,7 +181,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fail(e)
 				return
 			}
-			JSON(w, 200, a.Manager.Snapshot())
+			JSON(w, 200, a.snapshot())
 			return
 		case "/v1/device":
 			var v struct {

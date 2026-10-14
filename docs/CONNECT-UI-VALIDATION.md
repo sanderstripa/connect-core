@@ -58,7 +58,7 @@ packet fixture; the managed real TUN proof is Linux-only.
 
 ## Deliberately unavailable
 
-Automatic CA issuance, QR/client URI import, safe automatic Core updates, runtime
+This baseline report describes the original panel validation. The Windows client extension adds opt-in CA issuance and QR/client URI import; its current instructions and network validation gate are documented in apps/windows-core-client/README.md. Safe automatic Core updates, runtime
 logging levels, restoring access to a revoked certificate, long-term traffic
 history, public administrative listeners, management of existing external service
 processes and host route/firewall/DNS changes are not implemented. The UI exposes
