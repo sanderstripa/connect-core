@@ -125,6 +125,17 @@ try{
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'recovery-measurements.json')
  if($LASTEXITCODE -ne 0){throw 'Recovery failed'}
  Write-Output 'LAB_SERVER_STOP_RESTART_RECOVERY_PASSED'
+ # Independently interrupt the virtual link while the server process stays alive.
+ Clear-Lines $vm;Clear-Lines $client;$vm.writer.WriteLine('link-down');Await-Line $vm '^LAB_LINK_DOWN$'
+ python "$PSScriptRoot/ip-lab-services.py" failure
+ if($LASTEXITCODE -ne 0){throw 'Virtual link interruption leaked'}
+ Await-Line $client '"state":"reconnecting"' 35
+ if(-not (Get-NetAdapter -Name 'ccipvm' -ErrorAction SilentlyContinue)){throw 'Link interruption removed the protected interface'}
+ Clear-Lines $vm;Clear-Lines $client;$vm.writer.WriteLine('link-up');Await-Line $vm '^LAB_LINK_UP$'
+ Await-Line $client '"state":"ready"' 35
+ python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'link-recovery-measurements.json')
+ if($LASTEXITCODE -ne 0){throw 'Virtual link recovery failed'}
+ Write-Output 'LAB_VIRTUAL_LINK_INTERRUPTION_RECOVERY_PASSED'
  python "$PSScriptRoot/vm-negative-probes.py" | Tee-Object -FilePath (Join-Path $out 'active-negative-probes.log')
  if($LASTEXITCODE -ne 0){throw 'IPv4/IPv6/DNS guard failed'}
  Clear-Lines $client;$client.writer.WriteLine('{"ipc_version":1,"command":"status"}');Await-Line $client '"state":"ready"' 5

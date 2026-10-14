@@ -94,7 +94,9 @@ as workstation or production VPN setup.
 The harness checks actual HTTP, binary TCP/UDP with 1, 8 and 32 concurrent
 connections, DNS over the tunnel and the Windows resolver for a unique `.test`
 name. It tests bad server identity before interface creation, server kill/restart,
-Core crash, blocked direct IPv4/IPv6/DNS probes, and journal rollback. Unit tests
+Core crash, blocked direct IPv4/IPv6/DNS probes, and journal rollback. The final
+harness also drops/restores the guest virtual NIC with the server process alive;
+its result must be verified separately, not inferred from server restart. Unit tests
 separately cover wrong CA/client keys, malformed packets and address policies.
 Resource artifacts distinguish Windows Core CPU/RAM from Linux Core CPU/RAM.
 QEMU emulation overhead means these numbers cannot rank Xray, Sudoku or MIST.
