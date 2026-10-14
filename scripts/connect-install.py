@@ -269,7 +269,7 @@ def renew_certificate(m):
     if run('openssl','x509','-checkend',str(72*3600),'-noout','-in',str(cert),check=False).returncode==0: return
     run('systemctl','stop','connect-ui.service')
     try: certificate_issue(m)
-    finally: run('systemctl','start','connect-ui.service')
+    finally: start_owned('connect-ui.service')
     health(m)
     print('CONNECT panel certificate renewed')
 
@@ -380,6 +380,14 @@ def install(args, revision, release):
         rollback_install(m)
         raise
 
+def start_owned(name):
+    if name not in RUNTIME_NAMES: raise RuntimeError('Refusing to reset/start a foreign service')
+    # An intentional failed update may exhaust systemd's start-rate limit.
+    # Reset only the owned service before an explicit recovery/release switch;
+    # leave automatic restart limiting in force during normal operation.
+    run('systemctl','reset-failed',name)
+    run('systemctl','start',name)
+
 def update(args, m, revision, release):
     verify_owned(m)
     if revision == m['revision']: print('Already installed this immutable revision'); return
@@ -397,12 +405,12 @@ def update(args, m, revision, release):
     for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name)
     try:
         next_link = ROOT / 'current.next'; next_link.symlink_to(target); os.replace(next_link, ROOT / 'current')
-        for name in ['connect-core.service', 'connect-ui.service']: run('systemctl', 'start', name)
+        for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m)
     except BaseException:
         for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name, check=False)
         next_link = ROOT / 'current.next'; next_link.unlink(missing_ok=True); next_link.symlink_to(old); os.replace(next_link, ROOT / 'current')
-        for name in ['connect-core.service', 'connect-ui.service']: run('systemctl', 'start', name)
+        for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m); shutil.rmtree(target); raise
     m['previous_revision'] = m['revision']; m['revision'] = revision; save(JOURNAL / 'manifest.json', m)
     print('CONNECT updated; credentials, device registrations and revocations preserved. Previous binary revision retained.')
