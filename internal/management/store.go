@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-const Version = "0.2.1"
+const Version = "0.2.2"
 const APIVersion = 1
 
 func Random() string {

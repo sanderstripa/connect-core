@@ -182,6 +182,20 @@ def build(args, stage):
     if not re.fullmatch(r'0\.2\.\d+', version): raise RuntimeError('Unsupported installer/schema compatibility version')
     return revision, release
 
+def publish_release(release, target):
+    """Program files must be traversable/executable under any caller umask.
+
+    Credentials live in STATE/CONFIG, never in this program-only directory.
+    Do not weaken permissions on keys or installer journals.
+    """
+    shutil.copytree(release, target)
+    for directory, dirs, files in os.walk(target):
+        pathlib.Path(directory).chmod(0o755)
+        for name in files:
+            path=pathlib.Path(directory)/name
+            if path.is_symlink(): raise RuntimeError('Unexpected symlink in program release')
+            path.chmod(0o755 if path.parent==target/'bin' else 0o644)
+
 def unit_files():
     hardening = 'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nUMask=0077\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n'
     core_hardening = hardening.replace('AF_INET AF_INET6 AF_UNIX', 'AF_INET AF_INET6 AF_UNIX AF_NETLINK')
@@ -207,7 +221,8 @@ def health(m, password=None):
     for _ in range(100):
         try:
             for name in RUNTIME_NAMES:
-                if run('systemctl', 'is-active', name, check=False).stdout.strip() != 'active': raise RuntimeError('owned service not active')
+                service_state=run('systemctl','is-active',name,check=False).stdout.strip()
+                if service_state != 'active': raise RuntimeError(name + ' is ' + service_state)
             req = urllib.request.Request('http://' + config['listen'] + '/v1/status', headers={'Authorization': 'Bearer ' + token})
             with opener.open(req, timeout=2) as response: status = json.load(response)
             if status['api_version'] != 1 or status['status'] != 'running': raise RuntimeError('real server not ready')
@@ -333,8 +348,8 @@ def install(args, revision, release):
     try:
         for directory in [ROOT, STATE, CONFIG]:
             directory.mkdir(mode=0o700); m['created_dirs'].append(str(directory)); save(JOURNAL / 'manifest.json', m)
-        ROOT.chmod(0o755); (ROOT / 'releases').mkdir(mode=0o755)
-        target = ROOT / 'releases' / revision; shutil.copytree(release, target); (ROOT / 'current').symlink_to(target)
+        ROOT.chmod(0o755); (ROOT / 'releases').mkdir(mode=0o755); (ROOT / 'releases').chmod(0o755)
+        target = ROOT / 'releases' / revision; publish_release(release, target); (ROOT / 'current').symlink_to(target)
         run('groupadd', '--system', GROUP); m['group_created'] = True; save(JOURNAL / 'manifest.json', m)
         for name in USERS:
             run('useradd', '--system', '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', '--gid', GROUP, name)
@@ -393,7 +408,7 @@ def update(args, m, revision, release):
     if revision == m['revision']: print('Already installed this immutable revision'); return
     old = (ROOT / 'current').resolve(); target = ROOT / 'releases' / revision
     if target.exists(): raise RuntimeError('Release directory already exists; refusing overwrite')
-    shutil.copytree(release, target)
+    publish_release(release, target)
     # Compatibility check is read-only: never restore a stale state backup that
     # could undo newer certificate revocations.
     try:

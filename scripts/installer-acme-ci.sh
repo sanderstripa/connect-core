@@ -27,4 +27,5 @@ cat "$stage/pebble.minica.pem" >> "$stage/issued-ca.pem"
 export LEGO_CA_CERTIFICATES="$stage/pebble.minica.pem"
 export CONNECT_TEST_CA="$stage/issued-ca.pem"
 export CONNECT_TEST_ACME=https://127.0.0.1:14000/dir
+umask 077
 python3 scripts/installer-smoke.py

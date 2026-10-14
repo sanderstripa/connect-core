@@ -62,6 +62,8 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert occupied.returncode != 0 and not installer.ROOT.exists(), 'occupied port install made system changes'
         result = subprocess.run(['bash','-o','pipefail','-c','cat "$1" | bash -s -- "${@:2}"','--',str(root/'scripts'/'install-vps.sh'),*args[2:],'--revision',run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()],input='',capture_output=True,text=True)
         if result.returncode: raise RuntimeError('real installer failed: '+result.stderr)
+        assert (installer.ROOT/'releases').stat().st_mode & 0o777 == 0o755, 'restrictive caller umask blocked release traversal'
+        assert (installer.ROOT/'current'/'bin'/'connect-control').stat().st_mode & 0o777 == 0o755, 'service executable permissions wrong'
         credentials=json.loads((installer.CONFIG/'install-access.json').read_text())
         password=credentials['password']
         assert len(password)>=32 and credentials['username']=='admin' and credentials['panel']==origin
