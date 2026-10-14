@@ -441,6 +441,10 @@ def main():
     dependencies()
     with open('/run/connect-core-installer.lock', 'a') as lock:
         os.chmod(lock.name, 0o600); fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if a.action == 'install' and (JOURNAL / 'manifest.json').is_file():
+            # The update path verifies ownership before changing anything.
+            # Never adopt an unowned directory or reset existing credentials.
+            a.action = 'update'
         if a.action == 'install':
             ensure_fresh()
             prepare_install(a)

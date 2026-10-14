@@ -134,7 +134,11 @@ func (w *worker) enroll(path, link string) {
 			}
 			if e == nil {
 				b = bundle{Config: reply.Config, CA: []byte(reply.CA), Cert: []byte(reply.Certificate), Key: key}
-				_, e = b.tls()
+				automaticVPN(&b.Config)
+				_, e = b.Config.Validate(false)
+				if e == nil {
+					_, e = b.tls()
+				}
 			}
 		}
 		if e == nil {

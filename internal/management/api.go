@@ -132,7 +132,7 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				JSON(w, 400, map[string]string{"error": "invalid invitation"})
 				return
 			}
-			result, e := a.Broker.Create(v.Name, v.IP)
+			result, e := a.Broker.CreateQuick(v.Name, v.IP)
 			if e != nil {
 				fail(e)
 				return

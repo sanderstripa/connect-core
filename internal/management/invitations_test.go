@@ -48,6 +48,56 @@ func brokerFixture(t *testing.T) (*Manager, *Broker, string) {
 	t.Cleanup(func() { srv.Close() })
 	return m, broker, dir
 }
+func TestQuickInvitationOneTimeKeyAndRestart(t *testing.T) {
+	m, b, dir := brokerFixture(t)
+	invite, err := b.CreateQuick("Quick client", "10.231.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := onboarding.NewClient(invite["link"], filepath.Join(dir, "quick-client"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ready, err := client.Poll(ctx); err != nil || !ready {
+		t.Fatalf("automatic enrollment: %v %v", ready, err)
+	}
+	if _, err = b.CreateQuick("Reserved", "10.231.0.2"); err == nil {
+		t.Fatal("allocated IP reused")
+	}
+	other, err := onboarding.NewClient(invite["link"], filepath.Join(dir, "quick-foreign"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = other.Poll(ctx); err == nil {
+		t.Fatal("one-time invitation accepted another key")
+	}
+	reloaded, err := NewBroker(m, b.path, b.url, filepath.Join(dir, "keys", "enrollment.pem"), filepath.Join(dir, "keys", "ca-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := reloaded.List()[0]; !row.AutoApprove || row.Status != "approved" {
+		t.Fatal("quick authorization not durable")
+	}
+	if ready, err := client.Poll(ctx); err != nil || !ready {
+		t.Fatalf("same-key retry: %v %v", ready, err)
+	}
+	invite, err = b.CreateQuick("Cancelled", "10.231.0.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.Cancel(invite["id"]); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := onboarding.NewClient(invite["link"], filepath.Join(dir, "cancelled"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cancelled.Poll(ctx); err == nil {
+		t.Fatal("cancelled invitation redeemed")
+	}
+}
 func TestConnectLinkRealHTTPSApprovalKeyIsolationAndRestart(t *testing.T) {
 	m, b, dir := brokerFixture(t)
 	invite, e := b.Create("Actual enrolled client", "10.231.0.2")

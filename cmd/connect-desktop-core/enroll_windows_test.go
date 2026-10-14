@@ -182,14 +182,10 @@ func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
 			t.Error("enrolled server shutdown stuck")
 		}
 	}()
-	// A VPS export intentionally needs a local DNS choice before the desktop
-	// helper can change networking. Do not invoke that helper on a test host.
-	w.connect()
-	w.mu.Lock()
-	blockedForDNS := w.state == desktop.Ready && w.code == 11
-	w.mu.Unlock()
-	if !blockedForDNS {
-		t.Fatal("managed export did not require explicit local DNS")
+	// Imported VPS profiles are ready with tunneled DNS. Do not invoke the
+	// privileged networking helper on the unit-test host.
+	if saved.Config.Network == nil || saved.Config.Network.Mode != "system-vpn" || saved.Config.Network.DNS != "1.1.1.1" {
+		t.Fatal("managed import did not configure automatic tunneled DNS")
 	}
 	clientTLS, err := saved.tls()
 	if err != nil {

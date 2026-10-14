@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         importer.stdin.write(invite['link']+'\n');importer.stdin.close()
         for _ in range(100):
             rows=api('/api/registrations')
-            pending=next((v for v in rows if v['id']==invite['id'] and v['status']=='pending'),None)
+            pending=next((v for v in rows if v['id']==invite['id'] and v['status']=='approved'),None)
             if pending:break
             time.sleep(.1)
         assert pending, 'real client registration not received'
@@ -99,7 +99,6 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         keypem=stage/'public.pem';keypem.write_text(raw)
         der=subprocess.check_output(['openssl','pkey','-pubin','-in',str(keypem),'-outform','DER'])
         fingerprint=hashlib.sha256(der).hexdigest();assert fingerprint==pending['fingerprint']
-        api('/api/registration',{'id':invite['id'],'action':'approve','fingerprint':fingerprint,'confirm':True})
         assert importer.wait(timeout=20)==0, 'client import did not finish'
         server_state=json.loads((installer.STATE/'control'/'state.json').read_text())
         client_key=(clientdir/'device-key.pem').read_text();assert client_key not in json.dumps(server_state)

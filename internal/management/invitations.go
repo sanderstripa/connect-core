@@ -18,6 +18,7 @@ import (
 )
 
 type Invitation struct {
+	AutoApprove bool      `json:"auto_approve,omitempty"`
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	IP          string    `json:"ip"`
@@ -117,6 +118,15 @@ func (b *Broker) save(item Invitation) error {
 	return nil
 }
 func (b *Broker) Create(name, ip string) (map[string]string, error) {
+	return b.create(name, ip, false)
+}
+
+// CreateQuick grants the first valid, locally generated key access using a one-time bearer link.
+func (b *Broker) CreateQuick(name, ip string) (map[string]string, error) {
+	return b.create(name, ip, true)
+}
+
+func (b *Broker) create(name, ip string, auto bool) (map[string]string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(name) < 1 || len(name) > 80 {
@@ -152,7 +162,7 @@ func (b *Broker) Create(name, ip string) (map[string]string, error) {
 	}
 	token := Random()
 	id := onboarding.Hash(token)
-	s := Invitation{ID: id, Name: name, IP: ip, Status: "invited", Expires: time.Now().UTC().Add(15 * time.Minute)}
+	s := Invitation{AutoApprove: auto, ID: id, Name: name, IP: ip, Status: "invited", Expires: time.Now().UTC().Add(15 * time.Minute)}
 	link := (onboarding.Link{URL: b.url, Token: token, Certificate: b.tlsDER}).String()
 	png, e := qrcode.Encode(link, qrcode.Medium, -4)
 	if e != nil {
@@ -199,6 +209,12 @@ func (b *Broker) Register(r Registration) (Invitation, error) {
 	if time.Now().After(v.Expires) && v.Status != "approved" {
 		return Invitation{}, errors.New("registration expired")
 	}
+	if v.AutoApprove && (v.Status == "pending" || v.Status == "issuing") {
+		if e = b.approveLocked(id, v.Fingerprint); e != nil {
+			return Invitation{}, e
+		}
+		v = b.state.Items[id]
+	}
 	return v, nil
 }
 func (b *Broker) List() []Invitation {
@@ -215,6 +231,9 @@ func (b *Broker) List() []Invitation {
 func (b *Broker) Approve(id, fingerprint string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.approveLocked(id, fingerprint)
+}
+func (b *Broker) approveLocked(id, fingerprint string) error {
 	v, ok := b.state.Items[id]
 	if !ok || (v.Status != "pending" && v.Status != "issuing") || time.Now().After(v.Expires) || fingerprint != v.Fingerprint {
 		return errors.New("matching independently verified key fingerprint required")

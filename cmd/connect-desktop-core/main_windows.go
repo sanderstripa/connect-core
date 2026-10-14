@@ -49,12 +49,23 @@ func (d *packetDevice) Read(b []byte) (int, error) {
 func (d *packetDevice) Write(b []byte) (int, error) { return len(b), nil }
 func (d *packetDevice) Close() error                { d.once.Do(func() { close(d.done) }); return nil }
 
+func automaticVPN(c *ipvpn.Config) {
+	if c.Environment == "managed-vps" && c.Network == nil {
+		dns := "1.1.1.1"
+		if endpoint, e := netip.ParseAddrPort(c.Endpoint); e == nil && endpoint.Addr().String() == dns {
+			dns = "9.9.9.9"
+		}
+		c.Network = &ipvpn.NetworkPolicy{Mode: "system-vpn", DNS: dns}
+	}
+}
+
 func load(path string) (bundle, error) {
 	var b bundle
 	c, e := ipvpn.Load(path)
 	if e != nil {
 		return b, e
 	}
+	automaticVPN(&c)
 	if _, e = c.Validate(false); e != nil {
 		return b, e
 	}
@@ -287,6 +298,7 @@ func (w *worker) connect() {
 		w.mu.Unlock()
 		return
 	}
+	automaticVPN(&w.b.Config)
 	b := w.b
 	if b.Config.Environment == "managed-vps" && b.Config.Network == nil {
 		w.state = desktop.Ready
@@ -444,6 +456,7 @@ func main() {
 	if sealed, e := os.ReadFile(path); e == nil && len(sealed) < 300000 {
 		if raw, e := protect(sealed, true); e == nil {
 			if json.Unmarshal(raw, &w.b) == nil {
+				automaticVPN(&w.b.Config)
 				if _, e = w.b.Config.Validate(false); e == nil {
 					if _, e = w.b.tls(); e == nil {
 						w.state = desktop.Ready
