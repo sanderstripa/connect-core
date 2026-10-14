@@ -1,0 +1,87 @@
+name: Windows Core Client
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.0'
+      - run: sudo apt-get update && sudo apt-get install -y cpio
+      - run: bash scripts/vm-linux-build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-disposable-linux-boot
+          retention-days: 1
+          path: |
+            vm-boot/vmlinuz
+            vm-boot/rootfs.cpio.gz
+            vm-boot/boot-sha256.txt
+            vm-boot/lab/
+  build:
+    needs: linux-image
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.0'
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
+      - run: go build -trimpath -ldflags="-s -w" -o dist/connect-desktop-core.exe ./cmd/connect-desktop-core
+      - run: cmake -S apps/windows-core-client -B build/desktop -A x64
+      - run: cmake --build build/desktop --config Release
+      - run: Copy-Item build/desktop/Release/ConnectCore.exe dist/
+      - run: Copy-Item build/desktop/Release/ConnectCoreNetwork.exe dist/
+      - name: Verify and package official Wintun
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile build/wintun.zip
+          if ((Get-FileHash build/wintun.zip -Algorithm SHA256).Hash -ne '07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51') { throw 'Wintun archive checksum mismatch' }
+          Expand-Archive build/wintun.zip build/wintun -Force
+          $dll = 'build/wintun/wintun/bin/amd64/wintun.dll'
+          $signature = Get-AuthenticodeSignature $dll
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=WireGuard LLC') { throw 'Wintun publisher rejected' }
+          Copy-Item $dll dist/
+          Copy-Item build/wintun/wintun/LICENSE.txt dist/WINTUN-LICENSE.txt
+      - run: ./scripts/desktop-smoke.ps1 -Directory dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-disposable-linux-boot
+          path: vm-boot/
+      - run: ./scripts/desktop-vm-ci.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-system-vpn-evidence
+          path: |
+            desktop-vm-artifacts/*.log
+            desktop-vm-artifacts/*measurements.json
+            desktop-vm-artifacts/*verification.json
+            desktop-vm-artifacts/*probes.json
+            desktop-vm-artifacts/*adapters.json
+            desktop-vm-artifacts/final-routes.json
+            desktop-vm-artifacts/final-addresses.json
+            desktop-vm-artifacts/wfp-*.xml
+            desktop-vm-artifacts/tun-statistics.json
+            desktop-vm-artifacts/*.pcap
+            desktop-vm-artifacts/*.pcapng
+            desktop-vm-artifacts/*.etl
+      - name: Include instructions, notices and checksums
+        shell: pwsh
+        run: |
+          Copy-Item apps/windows-core-client/README.md dist/README.md
+          Copy-Item THIRD-PARTY-NOTICES.md dist/
+          Copy-Item third_party dist/third_party -Recurse
+          Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe','.dll' } | Sort-Object Name | ForEach-Object { $hash = Get-FileHash $_.FullName -Algorithm SHA256; "$($hash.Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConnectCore-Windows-x64
+          path: dist/

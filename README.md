@@ -1,5 +1,10 @@
 # CONNECT Core
 
+Separate native Windows 11 laboratory component: [CONNECT CORE client](apps/windows-core-client/README.md).
+It uses the real CONNECT IP v2 Go engine. Its opt-in system IPv4 mode manages
+owned routes and DNS through a separate elevated helper, with WFP fail-closed
+protection. The existing CONNECT application is unchanged.
+
 Experimental network engine, with a separate experimental **CONNECT Protocol**.
 Two working paths in the existing Go engine: legacy loopback TCP forwarding and
 new **CONNECT IP v2**, an isolated IPv4 TUN lab using QUIC DATAGRAM + TLS 1.3 mTLS.
@@ -15,9 +20,27 @@ application -> TUN -> CONNECT IP/2 + QUIC DATAGRAM/mTLS -> server TUN
 Run the real TUN slice using [IP lab instructions](docs/IP-LAB.md).
 Linux runs only in disposable network namespaces. Real Linux TUN TCP/UDP/DNS and
 a native Windows Wintun DNS/QUIC round trip passed in isolated CI. The Windows
-native job uses a packet fixture as its server; Windows-VM-to-Linux-VM testing
-is a separate required gate. See [validation evidence](docs/VALIDATION.md).
+native job uses a packet fixture as its server. Two additional required workflows
+exercise Windows-to-Linux VM traffic for the managed CLI and system desktop
+client. See [integration scope and safe field test](docs/INTEGRATION.md) and
+[historical validation evidence](docs/VALIDATION.md).
 No real VPS was accessed. Amsterdam and the Danish services are untouched.
+
+## CONNECT UI
+
+CONNECT UI **0.2.0** adds a reviewed, transactional [VPS installer and updates](docs/VPS-INSTALL.md)
+and actual `connect://` enrollment links/QR. The CLI importer generates its key
+locally; an operator verifies its fingerprint before the managed CA issues a
+certificate. The protected panel/API stay on localhost; only the explicit data
+and enrollment ports are published. No existing VPN service is adopted or restarted.
+
+The separate minimal local panel and protected CONNECT IP v2 control process are
+documented in [installation, security and compatibility](docs/CONNECT-UI.md).
+`connect-control` owns its real QUIC/TUN server, supports durable hot revocation,
+CSR proof enrollment, optional managed CA issuance and real counters.
+`connect-ui` has scrypt passwords, sessions, CSRF and login rate limits; both
+administrative listeners are loopback-only. No data server starts automatically.
+See [validation and unavailable capabilities](docs/CONNECT-UI-VALIDATION.md).
 
 ## Legacy TCP lab (v1)
 
@@ -90,11 +113,19 @@ under your own account and do not treat generated keys as production secrets.
 
 The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/ICMP
 packets, QUIC datagrams, static device leases and private destination policy.
-SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
-route/DNS/firewall management, full-device kill switch, runtime adapters and
-administration UI are **not implemented**. Other applications' traffic outside
-the lab is not covered. Namespace leak tests do not prove system-wide Windows
-VPN leak safety. Dependencies/licenses and exact reuse are documented in
+The managed v2 CLI client adds fresh authenticated reconnects while retaining
+and draining its native interface, plus private versioned status/stop IPC.
+Its separate CI-only network helper and paired Windows/Linux VM tests remain
+available in [the VM stage](docs/VM-PAIR.md). The desktop client uses its own
+DPAPI worker and elevated WFP helper; these IPC/helper interfaces are distinct.
+
+SOCKS, IPv6 tunneling, HTTP/2 fallback, masking, transparent recovery of existing
+flows, runtime adapters and public administration are **not implemented**.
+IPv6 outside loopback is blocked in desktop system mode. Local CONNECT UI is
+available for managed IP v2. Public Internet performance, production VPS field
+operation and boot-time isolation are not established by disposable VM tests.
+Namespace leak tests alone do not prove system-wide Windows VPN leak safety.
+Dependencies/licenses and exact reuse are documented in
 [decisions](docs/DECISIONS.md) and [refreshed audit](docs/IMPLEMENTATION-AUDIT.md).
 
 ## Checks

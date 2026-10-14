@@ -102,3 +102,11 @@ intentionally rejected. Moving to a separately authorized test VPS requires a
 new reviewed deployment stage, real credential issuance, endpoint route protection,
 rollback and an explicit server-change approval. Amsterdam and the Danish VPS
 remain outside this lab.
+
+## Automated managed VM stage
+
+The isolated-vm-network-stage branch adds a separate paired-VM workflow and
+managed client with journaled lab network setup. Prefer that workflow for the
+new failure/rollback stage; the manual instructions above describe the earlier
+unmanaged packet lab. [VM-PAIR.md](VM-PAIR.md) documents exact boundaries and
+execution. Do not infer paired success from image preparation or baseline CI.

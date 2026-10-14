@@ -96,3 +96,10 @@ for concrete changes. Prefer a new host rather than the production VPN host.
 Keep lab certificates and address ranges separate. Take a snapshot before TUN
 tests; retain rollback and packet captures. Lab support is not authorization
 to deploy to a real server or a production configuration.
+
+The next isolated stage adds a managed client owning one native interface across
+fresh QUIC sessions, private inherited-pipe control, and a separate journaled
+Windows CI network helper. The engine still does not edit workstation routes,
+DNS or firewall rules. The helper is available only in an opted-in disposable
+CI VM and retains persistent guards across Core crashes. See
+[VM-PAIR.md](VM-PAIR.md) for topology, failure boundaries and evidence gates.

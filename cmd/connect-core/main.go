@@ -13,10 +13,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"
+	"github.com/sanderstripa/connect-core/internal/onboarding"
+	"strings"
 )
 
 func main() {
@@ -26,10 +27,50 @@ func main() {
 }
 func run() error {
 	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
+		return fmt.Errorf("usage: connect-core {init-lab|init-enrollment-lab|import-link|server|client|http-lab|ip-server|ip-client|ip-client-managed|ip-client-reconnect} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
-	if mode == "init-lab" {
+	if mode == "import-link" {
+		fmt.Fprintln(os.Stderr, "Paste connect:// invitation via stdin (not a command argument):")
+		b, e := io.ReadAll(io.LimitReader(os.Stdin, 4097))
+		if e != nil {
+			return e
+		}
+		link := strings.TrimSpace(string(b))
+		var client *onboarding.Client
+		if _, e = os.Stat(path); os.IsNotExist(e) {
+			client, e = onboarding.NewClient(link, path)
+		} else {
+			client, e = onboarding.ResumeClient(link, path)
+		}
+		if e != nil {
+			return e
+		}
+		fmt.Printf("Compare this device key fingerprint with the panel before approval:\n%s\n", client.Fingerprint())
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+		for {
+			ready, e := client.Poll(ctx)
+			if e != nil {
+				return e
+			}
+			if ready {
+				fmt.Println("Registered. Private key stayed local. Configuration: connect-ip-client.json")
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("registration waiting ended; resume with the same directory and invitation")
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}
+	if mode == "ip-client-managed" || mode == "ip-client-reconnect" {
+		return runManaged(path, mode == "ip-client-managed")
+	}
+	if mode == "init-lab" || mode == "init-enrollment-lab" {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			return fmt.Errorf("choose a new lab directory")
 		}
@@ -37,7 +78,12 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		s, c, err := lab.Generate(absolute)
+		var s, c core.Config
+		if mode == "init-enrollment-lab" {
+			s, c, err = lab.GenerateIssuance(absolute)
+		} else {
+			s, c, err = lab.Generate(absolute)
+		}
 		if err != nil {
 			return err
 		}
@@ -120,11 +166,11 @@ func runIP(mode, path string) error {
 	stats := &ipvpn.Stats{}
 	defer func() { b, _ := json.Marshal(stats.Snapshot()); fmt.Printf("CONNECT IP stats %s\n", b) }()
 	if server {
-		l, e := quic.ListenAddr(cfg.Endpoint, t, ipvpn.QUIC())
+		l, closeListener, e := ipvpn.Listen(cfg.Endpoint, t)
 		if e != nil {
 			return e
 		}
-		defer l.Close()
+		defer closeListener()
 		d, e := ipvpn.Open(cfg.Interface)
 		if e != nil {
 			return e

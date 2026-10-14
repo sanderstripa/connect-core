@@ -108,7 +108,12 @@ of 64 packets. Overflow drops; slow client never blocks another delivery queue.
 Malformed/denied datagrams drop without error reflection. Library datagram
 queues are also bounded; exact library bounds are version-specific. Cancellation
 closes QUIC, TUN and joins packet workers. An I/O failure ends the session; this
-revision has no resume, hot revocation, retry-of-application-data, padding or
+revision has no wire-level resume, hot revocation, retry-of-application-data, padding or
 automatic transport fallback. Certificate validity is checked at handshake;
 active-session expiry enforcement is a future gate. No camouflage or complete
 DoS defense is implied by this format.
+
+The managed client may reconnect with a fresh authenticated v2 session while
+retaining its native interface. It drops packets during disconnection and does
+not replay application data. This changes local lifecycle behavior, not framing
+or cryptographic primitives. Private IPC is specified in [VM-PAIR.md](VM-PAIR.md).

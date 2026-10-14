@@ -114,3 +114,18 @@ device package is used, not WireGuard's VPN/Noise engine. Windows needs a separa
 official Wintun runtime DLL; it is not included here and has its own distribution
 terms. CONNECT Core still has no repository-wide license grant: this milestone
 does not invent one on the owner's behalf.
+
+## Managed lifecycle and disposable paired VMs
+
+Use fresh mTLS sessions after transport failure, preserving the native interface
+and dropping disconnected packets. Never downgrade trust or select a direct
+transport. Separate elevated lab network transactions from the packet engine;
+journal each attempted change before applying it and remove persistent guards
+last on rollback. Use inherited bounded JSON-line pipes for local UI ownership,
+not a new public control listener.
+
+Without a local hypervisor, run a real Linux kernel in restricted QEMU software
+emulation inside a disposable Windows Actions VM. This avoids altering the
+personal Windows host and makes two-kernel testing reproducible. It does not
+establish production internet VPN readiness or comparable engine performance.
+See [VM-PAIR.md](VM-PAIR.md); paired success remains an evidence gate.

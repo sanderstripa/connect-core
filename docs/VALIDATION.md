@@ -88,7 +88,7 @@ large echo deadlock from sequential send/read, PowerShell native argument
 splitting, and Windows IP readiness after creating a new adapter. Linux TUN and
 native Windows tests passed after those fixes; no failing stage is labelled passed.
 
-## Outstanding
+## Outstanding at the baseline IP v2 milestone
 
 * Real Windows client -> separate isolated Linux VM (then separately authorized
   test VPS), with captures on both sides.
@@ -100,3 +100,54 @@ native Windows tests passed after those fixes; no failing stage is labelled pass
 * Independent security review and matched performance comparisons.
 
 No Amsterdam/Danish VPS service or real server was accessed or changed.
+
+## Managed client / paired VM branch
+
+`isolated-vm-network-stage`, PR #4, adds fresh authenticated reconnects
+without native interface replacement, owned QUIC UDP listener cleanup, and private
+bounded pipe control. Local `go test -count=1 ./...` passed on Windows after these
+changes. Baseline Actions run 38534593178 passed Windows/Linux checks. The managed
+recovery test uses a real QUIC listener restarted on the same UDP address and an
+in-memory packet device; it proves lifecycle logic, not a VM TUN result.
+
+The paired workflow builds a real Linux guest image and runs it in QEMU inside a
+disposable Windows VM. No local hypervisor was available. Restricted guest routes
+and nftables enforce the guest boundary; SLIRP restrict mode was rejected after
+source inspection and a real QUIC reply timeout.
+
+[Run 38541885758](https://github.com/sanderstripa/connect-core/actions/runs/38541885758),
+commit 00c961d, passed actual Windows Wintun -> Linux TUN HTTP, binary TCP and UDP
+with overlapping 1/8/32 sockets, DNS/Windows resolver, foreign client CA/wrong
+server identity, malformed outer UDP, server kill/restart, Core crash, private
+IPC status with live counters, IPv4/DNS bypass probes, Linux capture and separate
+Windows NIC capture checks, then journal rollback. Its matching baseline
+[run 38541885856](https://github.com/sanderstripa/connect-core/actions/runs/38541885856)
+passed Windows/Linux checks. Additional stricter UDP/unknown-frame capture
+assertions passed when rerun locally against the downloaded immutable artifacts.
+
+The extended final stage also passed
+[run 38544707842](https://github.com/sanderstripa/connect-core/actions/runs/38544707842)
+at 10668578202caf78183f545a84a1664aac927aac, with matching baseline
+[38544708046](https://github.com/sanderstripa/connect-core/actions/runs/38544708046).
+It independently drops/restores the Linux virtual NIC while Core remains alive,
+then repeats all traffic series, enforces stricter outgoing UDP/unknown-frame
+checks, and verifies guest PCAP SHA-256 after export. Kernel console has a
+separate UART: a real scheduler message previously corrupted base64 evidence
+on the shared console and correctly failed the stage. Capture retrieval is now
+idempotent. Downloaded final Windows captures were checked again locally, and
+the PCAP digest matches the Linux-side log.
+
+Early runs failed on the Docker-exported console placeholder, serial input,
+PowerShell null backup path, IPv6 zero-prefix parsing, non-IP adapter alias and
+fixture listen backlog. More importantly, per-NIC capture detected one last
+outbound payload from an existing background TCP connection during firewall
+reauthorization. The gate was not weakened: the CI helper now journals and closes
+existing external IPv4 TCP flows before activation, and refuses external IPv6
+flows. TCP resets/control and inbound background data are reported separately.
+
+IPv6 direct probe returned WSA 10051 and route inventory has no external IPv6
+default route. This does not prove blocking on a routable IPv6 underlay. Tests
+are short, one device with 32 application flows, private service routing only.
+No public NAT/default route, long stability, independent-host pair or production
+kill switch is claimed. See [the measured report](VM-PAIR-REPORT.md) for numbers,
+capture counts, aggregate drops and exact gaps; [VM-PAIR.md](VM-PAIR.md) for launch.
