@@ -38,7 +38,7 @@ public sealed class CorePipe {
 }
 '@
 function StartGuest([string]$exe,[string[]]$arguments){$i=[Diagnostics.ProcessStartInfo]::new($exe);$i.UseShellExecute=$false;$i.CreateNoWindow=$true;$i.RedirectStandardError=$true;foreach($a in $arguments){$i.ArgumentList.Add($a)};return [Diagnostics.Process]::Start($i)}
-function AwaitGuest([string]$pattern,[int]$seconds=90){$deadline=[DateTime]::UtcNow.AddSeconds($seconds);while([DateTime]::UtcNow -lt $deadline){if($script:lineTask.IsCompleted){$line=$script:lineTask.GetAwaiter().GetResult();if($null -eq $line){throw 'Guest serial ended'};$script:guestLines.Add($line);$script:lineTask=$script:guestReader.ReadLineAsync();if($line -match $pattern){return}};Start-Sleep -Milliseconds 20};throw "Guest deadline: $pattern"}
+function AwaitGuest([string]$pattern,[int]$seconds=90){$deadline=[DateTime]::UtcNow.AddSeconds($seconds);while([DateTime]::UtcNow -lt $deadline){if($script:lineTask.IsCompleted){$line=$script:lineTask.GetAwaiter().GetResult();if($null -eq $line){throw 'Guest serial ended'};$script:guestLines.Add($line);$script:lineTask=$script:guestReader.ReadLineAsync();if($line -match $pattern){return};continue};Start-Sleep -Milliseconds 20};throw "Guest deadline: $pattern"}
 function ReceiveCapture([string]$path){
  $offset=$guestLines.Count;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 180
  $lines=$guestLines.GetRange($offset,$guestLines.Count-$offset)
