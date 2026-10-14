@@ -8,3 +8,10 @@
 __pycache__/
 /build/
 /dist/
+/control/
+/ui/
+/panel-lab/
+/managed-lab-artifacts/
+/ui-browser-artifacts/
+/node_modules/
+/package-lock.json

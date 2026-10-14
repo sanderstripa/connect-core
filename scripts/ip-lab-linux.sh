@@ -56,8 +56,18 @@ pids+=("$!")
 ip netns exec "$service" python3 "$root/scripts/ip-lab-services.py" ready
 ip netns exec "$client" tcpdump -U -n -i cw -w "$artifacts/underlay.pcap" >"$artifacts/capture.log" 2>&1 &
 capture=$!; pids+=("$capture")
-ip netns exec "$edge" "$bin" ip-server "$lab/credentials/ip-server.json" >"$artifacts/server.log" 2>&1 &
-serverpid=$!; pids+=("$serverpid")
+if [[ ${CONNECT_LAB_MANAGED:-0} == 1 ]]; then
+  "$root/bin/connect-control" init "$lab/control" "$lab/credentials/ip-server.json"
+  printf '%s\n' 'isolated-ci-only-password' | "$root/bin/connect-ui" init "$lab/ui" http://127.0.0.1:17891 "$lab/control/control-token"
+  ip netns exec "$edge" "$root/bin/connect-control" serve "$lab/control/control.json" >"$artifacts/server.log" 2>&1 &
+  serverpid=$!; pids+=("$serverpid")
+  ip netns exec "$edge" "$root/bin/connect-ui" serve "$lab/ui/ui.json" >"$artifacts/panel.log" 2>&1 &
+  pids+=("$!")
+  ip netns exec "$edge" python3 "$root/scripts/managed-lab-check.py" start
+else
+  ip netns exec "$edge" "$bin" ip-server "$lab/credentials/ip-server.json" >"$artifacts/server.log" 2>&1 &
+  serverpid=$!; pids+=("$serverpid")
+fi
 wait_interface() {
   for _ in {1..100}; do if ip -n "$1" link show ccip0 >/dev/null 2>&1; then return; fi; sleep 0.05; done
   cat "$artifacts/server.log" "$artifacts/client.log" 2>/dev/null || true
@@ -80,6 +90,18 @@ ip netns exec "$client" python3 "$root/scripts/ip-lab-services.py" denied
 # No default route/IPv6 route in client namespace: this is isolation, not a host kill switch.
 if ip -n "$client" route get 1.1.1.1 >"$artifacts/internet-route.txt" 2>&1; then echo 'Unexpected internet route'; exit 1; fi
 if ip -n "$client" -6 route get 2606:4700:4700::1111 >"$artifacts/ipv6-route.txt" 2>&1; then echo 'Unexpected IPv6 route'; exit 1; fi
+if [[ ${CONNECT_LAB_MANAGED:-0} == 1 ]]; then
+  ip netns exec "$edge" python3 "$root/scripts/managed-lab-check.py" revoke >"$artifacts/management-check.json"
+  # Entire controller process restart, not just its data server.
+  kill -INT "$serverpid"
+  wait "$serverpid"
+  ip netns exec "$edge" "$root/bin/connect-control" serve "$lab/control/control.json" >>"$artifacts/server.log" 2>&1 &
+  serverpid=$!; pids+=("$serverpid")
+  ip netns exec "$edge" python3 "$root/scripts/managed-lab-check.py" persisted
+  if ip netns exec "$client" "$bin" ip-client "$lab/credentials/ip-client.json" >"$artifacts/revoked-client.log" 2>&1; then
+    echo 'Revoked client connected after controller restart'; exit 1
+  fi
+fi
 kill -KILL "$serverpid"
 wait "$serverpid" 2>/dev/null || true
 ip netns exec "$client" python3 "$root/scripts/ip-lab-services.py" failure
