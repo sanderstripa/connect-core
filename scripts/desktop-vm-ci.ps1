@@ -17,6 +17,16 @@ using System.Text;
 using System.IO;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class NativeConnectWindow {
+ public delegate bool EnumCallback(IntPtr h,IntPtr p);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumCallback callback,IntPtr p);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder name,int n);
+ [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+ [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+ public static IntPtr Find(uint target){IntPtr result=IntPtr.Zero;EnumWindows((h,p)=>{uint pid;GetWindowThreadProcessId(h,out pid);var name=new StringBuilder(256);GetClassName(h,name,256);if(pid==target&&name.ToString()=="ConnectCoreLabWindow"){result=h;return false;}return true;},IntPtr.Zero);return result;}
+}
 public sealed class CorePipe {
  public Process Process;
  public volatile uint State,Code,Mode,Helper;
@@ -130,6 +140,31 @@ try{
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'helper-recovery-measurements.json');if($LASTEXITCODE){throw 'Client-command recovery failed'}
  Write-Output 'HELPER_CRASH_AND_CLIENT_IPC_RECOVERY_PASSED'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Worker shutdown hung'}
+ # Exercise the actual native window's worker pipes and Connect click. Direct
+ # worker tests cannot detect stderr being mixed into the binary UI channel.
+ $guiInfo=[Diagnostics.ProcessStartInfo]::new((Join-Path $dist 'ConnectCore.exe'));$guiInfo.UseShellExecute=$false;$guiInfo.CreateNoWindow=$true;$guiInfo.Environment['LOCALAPPDATA']=Join-Path $out 'private-profile'
+ $gui=[Diagnostics.Process]::Start($guiInfo)
+ try {
+  $deadline=[DateTime]::UtcNow.AddSeconds(15);$hwnd=[IntPtr]::Zero
+  do {Start-Sleep -Milliseconds 100;$hwnd=[NativeConnectWindow]::Find($gui.Id)}while($hwnd -eq [IntPtr]::Zero -and !$gui.HasExited -and [DateTime]::UtcNow -lt $deadline)
+  if($hwnd -eq [IntPtr]::Zero){throw 'Native connection window unavailable'}
+  Start-Sleep -Seconds 2
+  $scale=[NativeConnectWindow]::GetDpiForWindow($hwnd)/96.0;$click=([int](257*$scale) -shl 16) -bor [int](259*$scale)
+  [void][NativeConnectWindow]::PostMessage($hwnd,0x202,[IntPtr]::Zero,[IntPtr]$click)
+  $deadline=[DateTime]::UtcNow.AddSeconds(40)
+  do {Start-Sleep -Milliseconds 250;$adapter=@(Get-NetAdapter -Name 'ccvpn-*' -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up')}while(!$adapter.Count -and !$gui.HasExited -and [DateTime]::UtcNow -lt $deadline)
+  if(!$adapter.Count){throw 'Native Connect click did not create its tunnel'}
+  Start-Sleep -Seconds 4
+  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'native-window-measurements.json')
+  if($LASTEXITCODE){throw 'Actual native window failed TCP/UDP/DNS connection'}
+  $worker=@(Get-CimInstance Win32_Process -Filter "Name='connect-desktop-core.exe'" | Where-Object ParentProcessId -eq $gui.Id)
+  if($worker.Count -ne 1){throw 'Native window lost its worker to diagnostic output'}
+  [void][NativeConnectWindow]::PostMessage($hwnd,0x202,[IntPtr]::Zero,[IntPtr]$click)
+  Start-Sleep -Seconds 2
+  [void][NativeConnectWindow]::PostMessage($hwnd,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+  if(!$gui.WaitForExit(10000)){throw 'Native window shutdown hung'}
+  Write-Output 'NATIVE_WINDOW_CONNECT_TCP_UDP_DNS_STDERR_ISOLATION_PASSED'
+ } finally {if(!$gui.HasExited){$gui.Kill();$gui.WaitForExit()}}
  $deadline=[DateTime]::UtcNow.AddSeconds(5);do{$remaining=@(Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq $helperPath});if(!$remaining.Count){break};Start-Sleep -Milliseconds 100}while([DateTime]::UtcNow -lt $deadline)
  if($remaining.Count){throw 'Owned helper remained after disconnect'}
  ReceiveCapture (Join-Path $out 'linux-underlay.pcap')

@@ -12,11 +12,11 @@
 #include <cmath>
 #include <algorithm>
 
-constexpr UINT Update = WM_APP + 1, WorkerExit = WM_APP + 2;
+constexpr UINT Update = WM_APP + 1, WorkerExit = WM_APP + 2, Diagnostic = WM_APP + 3;
 struct Snapshot { uint32_t state, code; uint64_t tx, rx, elapsed; uint32_t mode;char endpoint[128];uint64_t dnsRTT; };
 static_assert(sizeof(Snapshot)==176);
-HWND window; HANDLE input=nullptr, output=nullptr, process=nullptr, job=nullptr;
-std::thread reader; Snapshot current{}; bool dark=false, diagnostics=false, shutting=false, coreAlive=false, pendingDNS=false;
+HWND window; HANDLE input=nullptr, output=nullptr, errorOutput=nullptr, process=nullptr, job=nullptr;
+std::thread reader, errorReader; Snapshot current{}; bool dark=false, diagnostics=false, shutting=false, coreAlive=false, pendingDNS=false;
 float dpi=96; int scroll=0; double rxRate=0,txRate=0; ULONGLONG lastSample=0; uint64_t oldTx=0,oldRx=0;
 ID2D1Factory* factory=nullptr; ID2D1HwndRenderTarget* target=nullptr; ID2D1SolidColorBrush* brush=nullptr;
 IDWriteFactory* writeFactory=nullptr; IDWriteTextFormat *body=nullptr,*captionFont=nullptr,*title=nullptr,*actionFont=nullptr;
@@ -30,28 +30,31 @@ void addLog(std::wstring s){if(logs.size()==64)logs.erase(logs.begin());logs.pus
 bool startWorker(){
  wchar_t path[32768];DWORD count=GetModuleFileNameW(nullptr,path,32768);if(!count||count==32768)return false;
  std::wstring exe(path,count);exe=exe.substr(0,exe.find_last_of(L"\\/")+1)+L"connect-desktop-core.exe";
- SECURITY_ATTRIBUTES sa{sizeof(sa),nullptr,TRUE};HANDLE childIn=nullptr,childOut=nullptr;
+ SECURITY_ATTRIBUTES sa{sizeof(sa),nullptr,TRUE};HANDLE childIn=nullptr,childOut=nullptr,childError=nullptr;
  if(!CreatePipe(&childIn,&input,&sa,0))return false;
  if(!CreatePipe(&output,&childOut,&sa,0)){CloseHandle(childIn);CloseHandle(input);input=nullptr;return false;}
+ if(!CreatePipe(&errorOutput,&childError,&sa,0)){CloseHandle(childIn);CloseHandle(childOut);CloseHandle(input);CloseHandle(output);input=output=nullptr;return false;}
+ SetHandleInformation(errorOutput,HANDLE_FLAG_INHERIT,0);
  SetHandleInformation(input,HANDLE_FLAG_INHERIT,0);SetHandleInformation(output,HANDLE_FLAG_INHERIT,0);
  // Only these two private handles may cross into the worker. No global listener.
  SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);std::vector<uint8_t> attributes(bytes);
  STARTUPINFOEXW si{};si.StartupInfo.cb=sizeof(si);si.lpAttributeList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
  bool initialized=InitializeProcThreadAttributeList(si.lpAttributeList,1,0,&bytes)!=FALSE;
- HANDLE handles[]={childIn,childOut};bool ok=initialized&&UpdateProcThreadAttribute(si.lpAttributeList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr);
- si.StartupInfo.dwFlags=STARTF_USESTDHANDLES;si.StartupInfo.hStdInput=childIn;si.StartupInfo.hStdOutput=childOut;si.StartupInfo.hStdError=childOut;
+ HANDLE handles[]={childIn,childOut,childError};bool ok=initialized&&UpdateProcThreadAttribute(si.lpAttributeList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr);
+ si.StartupInfo.dwFlags=STARTF_USESTDHANDLES;si.StartupInfo.hStdInput=childIn;si.StartupInfo.hStdOutput=childOut;si.StartupInfo.hStdError=childError;
  job=CreateJobObjectW(nullptr,nullptr);JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit{};limit.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
  ok=ok&&job&&SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limit,sizeof(limit));
  PROCESS_INFORMATION pi{};std::wstring cmd=L"\""+exe+L"\" --ipc";
  ok=ok&&CreateProcessW(exe.c_str(),cmd.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW|CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT,nullptr,nullptr,&si.StartupInfo,&pi);
- if(initialized)DeleteProcThreadAttributeList(si.lpAttributeList);CloseHandle(childIn);CloseHandle(childOut);
+ if(initialized)DeleteProcThreadAttributeList(si.lpAttributeList);CloseHandle(childIn);CloseHandle(childOut);CloseHandle(childError);
  if(ok){if(!AssignProcessToJobObject(job,pi.hProcess)){TerminateProcess(pi.hProcess,1);ok=false;}else{ResumeThread(pi.hThread);process=pi.hProcess;}CloseHandle(pi.hThread);if(!ok)CloseHandle(pi.hProcess);}
- if(!ok){CloseHandle(input);CloseHandle(output);input=output=nullptr;if(job)CloseHandle(job);job=nullptr;return false;}
+ if(!ok){CloseHandle(input);CloseHandle(output);CloseHandle(errorOutput);input=output=errorOutput=nullptr;if(job)CloseHandle(job);job=nullptr;return false;}
  coreAlive=true;
  reader=std::thread([](){while(true){uint8_t h[8];if(!exactRead(h,8))break;uint32_t n;memcpy(&n,h+4,4);if(h[0]!='C'||h[1]!='C'||h[2]!=2||h[3]!=128||n!=sizeof(Snapshot))break;auto s=new Snapshot{};if(!exactRead(s,sizeof(*s))){delete s;break;}if(!PostMessageW(window,Update,0,reinterpret_cast<LPARAM>(s))){delete s;break;}}PostMessageW(window,WorkerExit,0,0);});
+ errorReader=std::thread([](){std::string line;bool discard=false;char bytes[256];DWORD n=0;while(ReadFile(errorOutput,bytes,sizeof(bytes),&n,nullptr)&&n){for(DWORD i=0;i<n;i++){char c=bytes[i];if(c=='\n'){if(!discard&&line.rfind("CONNECT ",0)==0){auto message=new std::wstring(utf8(line.data(),static_cast<int>(line.size())));if(!PostMessageW(window,Diagnostic,0,reinterpret_cast<LPARAM>(message)))delete message;}line.clear();discard=false;}else if(c!='\r'){if(line.size()<1024)line.push_back(c);else discard=true;}}}});
  return true;
 }
-void stopWorker(){shutting=true;command(5);if(input){CloseHandle(input);input=nullptr;}if(process&&WaitForSingleObject(process,6000)!=WAIT_OBJECT_0)TerminateJobObject(job,1);if(job){CloseHandle(job);job=nullptr;}if(reader.joinable())reader.join();if(output)CloseHandle(output);if(process)CloseHandle(process);output=process=nullptr;coreAlive=false;MSG m;while(PeekMessageW(&m,window,Update,Update,PM_REMOVE))delete reinterpret_cast<Snapshot*>(m.lParam);}
+void stopWorker(){shutting=true;command(5);if(input){CloseHandle(input);input=nullptr;}if(process&&WaitForSingleObject(process,6000)!=WAIT_OBJECT_0)TerminateJobObject(job,1);if(job){CloseHandle(job);job=nullptr;}if(reader.joinable())reader.join();if(errorReader.joinable())errorReader.join();if(errorOutput){CloseHandle(errorOutput);errorOutput=nullptr;}if(output)CloseHandle(output);if(process)CloseHandle(process);output=process=nullptr;coreAlive=false;MSG m;while(PeekMessageW(&m,window,Update,Update,PM_REMOVE))delete reinterpret_cast<Snapshot*>(m.lParam);while(PeekMessageW(&m,window,Diagnostic,Diagnostic,PM_REMOVE))delete reinterpret_cast<std::wstring*>(m.lParam);}
 std::wstring stateText(){if(!coreAlive)return L"Ядро недоступно";switch(current.state){case 0:return L"Добавьте конфигурацию";case 1:return current.mode?L"Готов к системному подключению":L"Готов к лабораторному тесту";case 2:return L"Подготовка сети и проверка устройства…";case 3:return current.mode==1?L"Системный IPv4 VPN · CONNECT IP v2":L"CONNECT IP v2 · сеанс установлен";case 6:return L"Регистрация устройства…";default:return current.mode==1||current.mode==3?L"Ошибка · проверьте сохранённую защиту сети":L"Подключение завершилось с ошибкой";}}
 std::wstring errorText(){switch(current.code){case 1:return L"Конфигурация, сертификат или хранилище недоступны";case 2:return L"Ошибка сети, аутентификации или согласования v2";case 3:return L"Сертификат сервера не прошёл проверку";case 4:return L"Приглашение / QR недействительно или регистрация отклонена";case 5:return L"Нужна проверка / восстановление сети (F10)";case 7:return L"Подтверждение администратора отменено";case 8:return L"DNS-проба не получила корректный ответ";case 11:return L"Укажите DNS перед включением системного VPN";case 12:return L"Проверьте адрес IPv4 DNS или защищённое хранилище";default:return L"Ошибок не зарегистрировано";}}
 std::wstring amount(double n){wchar_t b[80];if(n<1024)swprintf_s(b,L"%.0f Б",n);else if(n<1048576)swprintf_s(b,L"%.1f КБ",n/1024);else swprintf_s(b,L"%.1f МБ",n/1048576);return b;}
@@ -107,6 +110,7 @@ LRESULT CALLBACK wndproc(HWND h,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
  case WM_DPICHANGED:{dpi=static_cast<float>(HIWORD(wp));if(target)target->SetDpi(dpi,dpi);auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);return 0;}
  case WM_TIMER:if(current.state==2)InvalidateRect(h,nullptr,FALSE);return 0;
  case Update:{auto p=reinterpret_cast<Snapshot*>(lp);if(pendingDNS&&(p->state==2||p->state==3||p->state==4||p->code==12))pendingDNS=false;if(p->state==6&&strnlen_s(p->endpoint,128)==64&&memcmp(p->endpoint,current.endpoint,128)!=0)addLog(L"Отпечаток публичного ключа устройства: "+utf8(p->endpoint,64));ULONGLONG now=GetTickCount64();if(lastSample&&now>lastSample&&p->tx>=oldTx&&p->rx>=oldRx){txRate=static_cast<double>(p->tx-oldTx)*1000/(now-lastSample);rxRate=static_cast<double>(p->rx-oldRx)*1000/(now-lastSample);}else txRate=rxRate=0;lastSample=now;oldTx=p->tx;oldRx=p->rx;if(p->state!=current.state||p->code!=current.code){current=*p;addLog(stateText()+L" · "+errorText());if(current.state==2)SetTimer(h,1,40,nullptr);else KillTimer(h,1);}else current=*p;delete p;InvalidateRect(h,nullptr,FALSE);return 0;}
+ case Diagnostic:{auto message=reinterpret_cast<std::wstring*>(lp);addLog(*message);delete message;return 0;}
  case WorkerExit:if(!shutting){coreAlive=false;current.state=4;current.code=current.mode?5:2;if(current.mode)current.mode=3;if(job)TerminateJobObject(job,1);KillTimer(h,1);txRate=rxRate=0;addLog(L"Ядро завершилось; прямой обход не выполняется");InvalidateRect(h,nullptr,FALSE);}return 0;
  case WM_KEYDOWN:{if(wp=='V'&&(GetKeyState(VK_CONTROL)&0x8000))pasteLink();else if(wp==VK_F2)importConfig();else if(wp==VK_F9)registerProtocol();else if(wp==VK_F10)recoverNetwork();else if(wp==VK_ESCAPE)command(3);else if(wp==VK_F6){diagnostics=!diagnostics;resizeWindow();}else if(wp==VK_F8){LPARAM click=MAKELPARAM(static_cast<int>(430*dpi/96),static_cast<int>((40-scroll)*dpi/96));SendMessageW(h,WM_LBUTTONUP,0,click);}else if(wp==VK_SPACE){LPARAM click=MAKELPARAM(static_cast<int>(259*dpi/96),static_cast<int>((257-scroll)*dpi/96));SendMessageW(h,WM_LBUTTONUP,0,click);}InvalidateRect(h,nullptr,FALSE);return 0;}
  case WM_COPYDATA:{auto data=reinterpret_cast<COPYDATASTRUCT*>(lp);if(data&&data->dwData==1&&data->cbData>=2&&data->cbData<=8194&&data->cbData%2==0){auto s=static_cast<const wchar_t*>(data->lpData);size_t n=data->cbData/2;if(s[n-1]==0){importLink(std::wstring(s,n-1));return TRUE;}}return FALSE;}
