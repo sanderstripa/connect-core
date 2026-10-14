@@ -21,10 +21,16 @@ No real VPS was accessed. Amsterdam and the Danish services are untouched.
 
 ## CONNECT UI
 
+CONNECT UI **0.2.0** adds a reviewed, transactional [VPS installer and updates](docs/VPS-INSTALL.md)
+and actual `connect://` enrollment links/QR. The CLI importer generates its key
+locally; an operator verifies its fingerprint before the managed CA issues a
+certificate. The protected panel/API stay on localhost; only the explicit data
+and enrollment ports are published. No existing VPN service is adopted or restarted.
+
 The separate minimal local panel and protected CONNECT IP v2 control process are
 documented in [installation, security and compatibility](docs/CONNECT-UI.md).
 `connect-control` owns its real QUIC/TUN server, supports durable hot revocation,
-CSR proof enrollment of externally issued client certificates and real counters.
+CSR proof enrollment, optional managed CA issuance and real counters.
 `connect-ui` has scrypt passwords, sessions, CSRF and login rate limits; both
 administrative listeners are loopback-only. No data server starts automatically.
 See [validation and unavailable capabilities](docs/CONNECT-UI-VALIDATION.md).

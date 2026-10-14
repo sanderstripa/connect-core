@@ -117,7 +117,7 @@ def build(args, stage):
     for name in ['connect-install.py', 'connect-vps-network.py']:
         shutil.copy2(source / 'scripts' / name, release / 'scripts' / name)
     version = run(str(release / 'bin' / 'connect-control'), 'version').stdout.strip()
-    if version != '0.2.0': raise RuntimeError('Unsupported installer/schema compatibility version')
+    if not re.fullmatch(r'0\.2\.\d+', version): raise RuntimeError('Unsupported installer/schema compatibility version')
     return revision, release
 
 def unit_files():
@@ -255,7 +255,9 @@ def update(args, m, revision, release):
     shutil.copytree(release, target)
     # Compatibility check is read-only: never restore a stale state backup that
     # could undo newer certificate revocations.
-    run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json'))
+    checked = run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json')).stdout.strip()
+    if checked != 'api_version=1 state_version=1 invitations_version=1':
+        shutil.rmtree(target); raise RuntimeError('Unrecognized persisted-state compatibility contract')
     for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name)
     try:
         next_link = ROOT / 'current.next'; next_link.symlink_to(target); os.replace(next_link, ROOT / 'current')

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -125,6 +126,9 @@ func (m *Manager) Start() error {
 		_ = pc.Close()
 		m.status = "error"
 		m.event("start failed: isolated TUN")
+		if m.state.Config.Environment == "managed-vps" {
+			return fmt.Errorf("installer-owned TUN unavailable: %w", e)
+		}
 		return errors.New("isolated TUN unavailable; check lab namespace and permissions")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
