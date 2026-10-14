@@ -25,7 +25,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
+		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client|ip-client-managed|ip-client-reconnect} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
 	if mode == "ip-client-managed" || mode == "ip-client-reconnect" {

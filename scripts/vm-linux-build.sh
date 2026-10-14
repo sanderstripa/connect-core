@@ -24,8 +24,15 @@ docker cp "$root/scripts/vm-linux-init.sh" "$container:/init"
 mkdir -p "$out/rootfs"
 docker export "$container" | tar -xf - -C "$out/rootfs"
 chmod +x "$out/rootfs/init" "$out/rootfs/connect-core"
-if [[ ! -e $out/rootfs/dev/console ]]; then sudo mknod -m 600 "$out/rootfs/dev/console" c 5 1; fi
-if [[ ! -e $out/rootfs/dev/null ]]; then sudo mknod -m 666 "$out/rootfs/dev/null" c 1 3; fi
+# Docker export can contain regular placeholders here. Kernel PID1 opens its
+# console before /init mounts devtmpfs; a regular file would swallow serial IPC.
+for device in console null; do
+ if [[ ! -c $out/rootfs/dev/$device ]]; then
+  sudo rm -f -- "$out/rootfs/dev/$device"
+  if [[ $device == console ]]; then sudo mknod -m 600 "$out/rootfs/dev/$device" c 5 1
+  else sudo mknod -m 666 "$out/rootfs/dev/$device" c 1 3; fi
+ fi
+done
 (cd "$out/rootfs" && find . -print0 | cpio --null -o --format=newc | gzip -1) > "$out/rootfs.cpio.gz"
 # The boot image holds only disposable 24h lab credentials; never upload it as a
 # product/release. CI's ephemeral provisioning artifact has one-day retention.
