@@ -53,12 +53,14 @@ CSR enrollment using the actual exported configuration, without restarting the
 server; this test passed locally and is included in subsequent PR CI runs.
 
 An installed panel on Windows does not by itself prove Windows-to-Linux VPN
-operation or remote VPS suitability. The Windows native job uses the existing
-packet fixture; the managed real TUN proof is Linux-only.
+operation or remote VPS suitability. The original Windows native job used the packet fixture; the managed TUN proof in this baseline was Linux-only. The newer desktop system VPN gate uses native Wintun and an independent Linux kernel guest; consult its actual run result before claiming that gate passed.
 
 ## Deliberately unavailable
 
-This baseline report describes the original panel validation. The Windows client extension adds opt-in CA issuance and QR/client URI import; its current instructions and network validation gate are documented in apps/windows-core-client/README.md. Safe automatic Core updates, runtime
+This baseline report describes the original panel validation. The Windows client
+extension adds opt-in CA issuance and QR/client URI import; its current instructions
+and network validation gate are documented in apps/windows-core-client/README.md.
+Safe automatic Core updates, runtime
 logging levels, restoring access to a revoked certificate, long-term traffic
 history, public administrative listeners, management of existing external service
 processes and host route/firewall/DNS changes are not implemented. The UI exposes

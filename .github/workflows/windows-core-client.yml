@@ -79,7 +79,7 @@ jobs:
           Copy-Item apps/windows-core-client/README.md dist/README.md
           Copy-Item THIRD-PARTY-NOTICES.md dist/
           Copy-Item third_party dist/third_party -Recurse
-          Get-ChildItem dist/*.exe | ForEach-Object { $hash = Get-FileHash $_.FullName -Algorithm SHA256; "$($hash.Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
+          Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe','.dll' } | Sort-Object Name | ForEach-Object { $hash = Get-FileHash $_.FullName -Algorithm SHA256; "$($hash.Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ConnectCore-Windows-x64
