@@ -88,16 +88,21 @@ def serve():
     print("lab services ready", flush=True)
     http_server.serve_forever()
 
-def exchange(port, data, host=HOST):
+def exchange(port, data, host=HOST, barrier=None):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(2)
+        if barrier is not None:
+            sock.bind(('0.0.0.0', 0))
+            barrier.wait(timeout=10)
         sock.sendto(data, (host, port))
         return sock.recv(4096)
 
-def tcp_echo(size, host=HOST, port=18083):
+def tcp_echo(size, host=HOST, port=18083, barrier=None):
     data = bytes(range(256)) * (size // 256)
     start = time.perf_counter()
     with socket.create_connection((host, port), timeout=10) as sock:
+        if barrier is not None:
+            barrier.wait(timeout=10)  # All N established sockets overlap.
         # Read while sending. Writing a large payload before reading its echo
         # can deadlock when both peers' socket buffers fill.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -133,10 +138,11 @@ def check():
     for count in (1, 8, 32):
         print(f"checking {count} concurrent TCP/UDP connections", file=sys.stderr, flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
-            durations = list(pool.map(tcp_echo, [16384] * count))
-            echoes = list(pool.map(lambda n: exchange(18082, CANARY + bytes([n])), range(count)))
+            tcp_gate, udp_gate = threading.Barrier(count), threading.Barrier(count)
+            durations = list(pool.map(lambda _: tcp_echo(16384, barrier=tcp_gate), range(count)))
+            echoes = list(pool.map(lambda n: exchange(18082, CANARY + bytes([n]), barrier=udp_gate), range(count)))
         assert echoes == [CANARY + bytes([n]) for n in range(count)]
-        connection_results[str(count)] = {"tcp": "pass", "udp": "pass", "tcp_seconds_max": max(durations)}
+        connection_results[str(count)] = {"tcp": "pass", "udp": "pass", "overlap_barrier": True, "tcp_seconds_max": max(durations)}
     # Separate sequential measurement: useful one-way payload, includes connect,
     # echo and teardown. It is not a one-way link throughput benchmark.
     elapsed = tcp_echo(1048576)
