@@ -69,6 +69,7 @@ start_server(){
  ip -n edge addr add 10.231.0.1/32 dev ccip0
  ip -n edge link set ccip0 up
  ip -n edge route add 10.231.0.2/32 dev ccip0
+ ip netns exec edge tcpdump -l -n -i ccip0 >/artifacts/tun-packets.log 2>&1 &
  echo LAB_SERVER_READY
 }
 start_server
@@ -79,7 +80,7 @@ while read -r command; do
   start-server) start_server ;;
   link-down) ip -n edge link set "$nic" down; echo LAB_LINK_DOWN ;;
   link-up) ip -n edge link set "$nic" up; echo LAB_LINK_UP ;;
-  diagnostics) cat /artifacts/server.log; cat /artifacts/services.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
+  diagnostics) cat /artifacts/server.log; cat /artifacts/services.log; cat /artifacts/tun-packets.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys
 p=pathlib.Path('/proc')/sys.argv[1]

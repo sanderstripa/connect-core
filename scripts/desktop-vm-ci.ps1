@@ -94,6 +94,10 @@ try{
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'linux-capture-verification.json');if($LASTEXITCODE){throw 'Linux underlay contained plaintext'}
  $passed=$true
 }finally{
+ if($client){$client.Status() | Set-Content (Join-Path $out 'final-core-status.log')}
+ Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric | ConvertTo-Json | Set-Content (Join-Path $out 'final-routes.json')
+ Get-NetIPAddress | Select-Object IPAddress,InterfaceIndex,AddressState | ConvertTo-Json | Set-Content (Join-Path $out 'final-addresses.json')
+ if(!$passed -and $serial){try{$guestWriter.WriteLine('diagnostics');AwaitGuest '^LAB_DIAGNOSTICS_END$' 20;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 20;$begin=$guestLines.IndexOf('LAB_PCAP_BEGIN');$end=$guestLines.IndexOf('LAB_PCAP_END');[IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($guestLines.GetRange($begin+1,$end-$begin-1) -join '')))}catch{Write-Warning 'Guest diagnostic capture unavailable'}}
  if($client -and !$client.Process.HasExited){try{$client.Send(5)}catch{};if(!$client.Process.WaitForExit(10000)){$client.Process.Kill();$client.Process.WaitForExit()}}
  if($client){$client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'network-helper.log')}
  Start-Sleep -Milliseconds 600

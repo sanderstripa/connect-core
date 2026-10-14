@@ -255,6 +255,7 @@ func (v *nativeView) Write(p []byte) (int, error) {
 // guard survive transport failure, so Windows cannot silently fall back direct.
 func (v *nativeView) Close() error {
 	v.once.Do(func() {
+		fmt.Fprintf(os.Stderr, "CONNECT network counters: sent=%d received=%d dropped=%d\n", v.bridge.stats.Sent.Load(), v.bridge.stats.Received.Load(), v.bridge.stats.Dropped.Load())
 		v.bridge.mu.Lock()
 		if v.bridge.active == v {
 			v.bridge.active = nil

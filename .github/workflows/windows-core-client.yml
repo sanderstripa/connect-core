@@ -67,6 +67,8 @@ jobs:
             desktop-vm-artifacts/*verification.json
             desktop-vm-artifacts/*probes.json
             desktop-vm-artifacts/*adapters.json
+            desktop-vm-artifacts/final-routes.json
+            desktop-vm-artifacts/final-addresses.json
             desktop-vm-artifacts/*.pcap
             desktop-vm-artifacts/*.pcapng
             desktop-vm-artifacts/*.etl
