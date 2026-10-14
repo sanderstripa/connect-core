@@ -54,6 +54,8 @@ for component in components:
                 if ip[9] == 17 and len(ip) >= header + 8:
                     ports = struct.unpack_from('!HH', ip, header)
                     assert 53 not in ports, 'external UDP DNS on underlay'
+                    assert src not in component['local_ipv4'], 'outbound UDP escaped static lab guard'
+                    counts['inbound_udp_packets'] += 1
                 if ip[9] == 6 and len(ip) >= header + 20:
                     ports = struct.unpack_from('!HH', ip, header)
                     assert 53 not in ports, 'external TCP DNS on underlay'
@@ -65,6 +67,11 @@ for component in components:
                     else:
                         assert dst in component['local_ipv4'], 'unknown NIC addresses: capture scope changed'
                         counts['inbound_tcp_payload_packets' if payload else 'inbound_tcp_control_packets'] += 1
+                if ip[9] == 1:
+                    assert len(ip) > header and ip[header] in (3, 11), 'unexpected underlay ICMP data'
+                    counts['icmp_control'] += 1
+                else:
+                    assert ip[9] in (6, 17), 'unsupported underlay IP protocol'
             elif ether == 0x86dd:
                 ip = packet[14:]
                 assert len(ip) >= 40

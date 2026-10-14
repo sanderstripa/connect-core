@@ -2,8 +2,13 @@
 
 This branch extends the existing CONNECT IP v2 engine. It does not change the
 wire format, copy another VPN engine, or grant production deployment permission.
-The automated stage is `.github/workflows/vm-pair.yml`. Run it from this branch
-with GitHub Actions; do not run the network helper on a personal workstation.
+The automated stage is `.github/workflows/vm-pair.yml`. It runs on PR updates.
+To reproduce without merging, open the latest paired Actions run for PR #4 and
+choose **Re-run all jobs**: Linux image preparation issues fresh disposable
+credentials before Windows boots it. Do not rerun just the Windows job with
+expired 24-hour provisioning credentials. The workflow_dispatch button may be
+unavailable until this workflow exists on the default branch; it is not a reason
+to merge automatically. Do not run the network helper on a personal workstation.
 
 ## Topology and scope
 
@@ -99,16 +104,23 @@ and absence of the DNS question/plaintext canary in captured 160-byte packet
 snapshots. This covers headers and the known UDP/DNS fixture payload prefix;
 it is not a byte-for-byte capture of every encrypted payload. The snapshot bound
 keeps UART evidence transfer practical under software emulation.
-Windows PktMon ETL/PCAPNG is
-collected separately. A timed-out probe alone is not proof of no transmitted
-packet. Do not claim complete Windows leakage validation merely from its capture
-being present: inspect the capture and state which interfaces were covered.
+Windows PktMon records complete packets at NIC components and exports each
+component separately. Mixed PktMon PCAPNG files lose interface attribution and
+even label raw Wintun packets as Ethernet, so they are retained for inspection
+but are not used as the leak verdict. The verifier requires native TCP/UDP capture
+coverage and checks every alternate NIC for lab IP/canary/DNS bypass, direct
+probes, outbound TCP/UDP data and unsupported IPv6 data. Inbound background TCP
+data, TCP control packets and IPv6 neighbor discovery are reported separately;
+their presence is not absence of transmitted user data. Fragmented/unknown/VLAN
+underlay framing causes refusal rather than an unverified pass. A timed-out probe
+alone is not proof of no transmitted packet. IPv6 route inventory and exact
+socket errors distinguish an unreachable IPv6 path from a filtering verdict.
 
 Result artifacts exclude keys, profiles containing private key paths, vendor
 binaries and the boot image. The provisioning image contains disposable 24-hour
 lab credentials and has one-day retention; it is never a release artifact.
 
-At creation of this document the paired run is still under investigation. Linux
-image preparation and ordinary Windows/Linux checks passed; no cross-VM success,
-resource number or complete leak result is claimed until the run and artifacts
-are verified. See VALIDATION.md for recorded outcomes.
+The first paired data/failure/rollback run passed (Actions 38539058485).
+Additional NIC analysis uncovered the existing-flow gap described above; it was
+not waived. Final stricter capture verification is recorded separately in
+VALIDATION.md. A successful traffic run alone does not prove all leakage gates.

@@ -160,7 +160,7 @@ try {
         $state.phase='active';Save-Journal
     }catch{
         $original=$_
-        try{Undo-Lab}catch{Write-Warning 'Rollback incomplete: persistent guard retained; inspect journal'}
+        try{Undo-Lab}catch{Write-Warning 'Rollback incomplete: retain journal, do not treat networking as restored; discard the disposable CI VM'}
         throw $original
     }
 }finally{$lock.Dispose()}
