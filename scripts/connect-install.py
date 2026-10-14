@@ -286,7 +286,7 @@ def install(args, revision, release):
         health(m)
         m['installed'] = True; save(JOURNAL / 'manifest.json', m)
         print(f'CONNECT installed. Panel: http://127.0.0.1:{args.panel_port} (admin). Use SSH forwarding for remote administration.')
-        print('Update: curl -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash -s -- update')
+        print('Update: curl -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/integration/windows-ui-vm/scripts/install-vps.sh | sudo bash -s -- update')
         print(f'Rollback installation: sudo python3 {ROOT}/current/scripts/connect-install.py uninstall')
     except BaseException:
         rollback_install(m)

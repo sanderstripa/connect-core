@@ -18,13 +18,13 @@ iproute2, iptables и доступным `/dev/net/tun`. Ubuntu 24.04 — про
 Скопируйте команду целиком. Заменять адрес, версию или другие значения не нужно:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/integration/windows-ui-vm/scripts/install-vps.sh | sudo bash
 ```
 
 Это одна команда, но изменения не бесконтрольные: после проверок нужно ответить
 `yes` на конкретный план и ввести пароль панели дважды через скрытый терминальный
 ввод. Пароль не находится в аргументах процесса, ссылках, журнале или выводе.
-Текущая ветка — `feat/connect-ui-local-control`, [PR #3](https://github.com/sanderstripa/connect-core/pull/3).
+Текущая ветка — `integration/windows-ui-vm`, [интеграционный PR #5](https://github.com/sanderstripa/connect-core/pull/5).
 Команда использует канал этой ветки, пока PR не слит. Установщик один раз получает
 полный SHA канала через GitHub API и собирает исходники именно этого коммита;
 SHA сохраняется в журнале установки. Явный `--revision` остаётся доступен.
@@ -165,7 +165,7 @@ handler, импорт в старый native lab client из PR #2, мобиль
 ## Обновление и откат
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash -s -- update
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/integration/windows-ui-vm/scripts/install-vps.sh | sudo bash -s -- update
 sudo python3 /opt/connect-core/current/scripts/connect-install.py rollback
 sudo python3 /opt/connect-core/current/scripts/connect-install.py status
 ```

@@ -85,8 +85,11 @@ and networking independent of Amsterdam, Xray, Sudoku and MIST.
    matching Windows x64 artifact. Verify ZIP/executable checksums and Wintun
    signature. Fetch scripts/install-vps.sh from that exact SHA, inspect it,
    then run `sudo bash install-vps.sh install --revision FULL_REVIEWED_SHA` on
-   the disposable VPS only. Do not use the wrapper's default channel: it still
-   resolves PR #3's branch. Review the displayed plan before confirming.
+   the disposable VPS only. The wrapper and printed update command now use the
+   integration/windows-ui-vm channel, resolved once to an immutable SHA, rather
+   than silently installing PR #3's older source. For this field trial, prefer
+   the reviewed pinned SHA matching the Windows ZIP. Review the displayed plan
+   before confirming.
 2. Supply a separate test panel password. Review discovered IPv4, unused ports,
    private /24 and uplink; use explicit overrides from VPS-INSTALL.md where
    needed. Permit only selected data UDP and enrollment TCP ports in the
