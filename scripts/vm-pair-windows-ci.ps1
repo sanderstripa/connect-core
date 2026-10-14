@@ -25,6 +25,9 @@ if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notma
 Copy-Item -LiteralPath $dll -Destination (Join-Path $bin 'wintun.dll')
 go build -o bin/connect-core.exe ./cmd/connect-core
 if($LASTEXITCODE -ne 0){throw 'Windows core build failed'}
+$rogue=Join-Path $boot 'rogue'
+& (Join-Path $bin 'connect-core.exe') init-lab $rogue | Out-Null
+if($LASTEXITCODE -ne 0){throw 'Negative identity fixture generation failed'}
 
 function Start-LabProcess([string]$file,[string[]]$arguments){
  $info=[Diagnostics.ProcessStartInfo]::new($file);$info.UseShellExecute=$false;$info.CreateNoWindow=$true
@@ -43,7 +46,7 @@ function Pump($record){
 function Await-Line($record,[string]$pattern,[int]$seconds=60){
  $deadline=[DateTime]::UtcNow.AddSeconds($seconds)
  while([DateTime]::UtcNow -lt $deadline){Pump $record;if(@($record.lines | Where-Object {$_ -match $pattern}).Count){return};if($record.process.HasExited){throw "Lab process exited before $pattern"};Start-Sleep -Milliseconds 20}
- throw "Timed out waiting for $pattern"
+ throw ("Timed out waiting for $pattern; last output: " + ($record.history | Select-Object -Last 12 | Out-String))
 }
 function Clear-Lines($record){Pump $record;$record.lines.Clear()}
 $vm=$null;$client=$null;$badProcess=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
@@ -74,6 +77,15 @@ try{
  $badProcess=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$badPath)
  if(-not $badProcess.process.WaitForExit(15000) -or $badProcess.process.ExitCode -eq 0){throw 'Bad certificate/name was accepted'}
  if(Get-NetAdapter -Name 'ccipbad' -ErrorAction SilentlyContinue){throw 'Bad authentication created an interface'}
+ # A real client leaf/key issued by another disposable CA must also be denied.
+ $bad.trust.server_name=$cfg.trust.server_name
+ $bad.trust.cert=Join-Path $rogue 'client.pem';$bad.trust.key=Join-Path $rogue 'client.key'
+ $bad | ConvertTo-Json -Depth 10 | Set-Content $badPath
+ $badProcess=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$badPath)
+ if(-not $badProcess.process.WaitForExit(15000) -or $badProcess.process.ExitCode -eq 0){throw 'Foreign client certificate was accepted'}
+ if(Get-NetAdapter -Name 'ccipbad' -ErrorAction SilentlyContinue){throw 'Foreign identity created an interface'}
+ python -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); [s.sendto(b'CONNECT-invalid-'+bytes([i]),('127.0.0.1',17444)) for i in range(100)]; s.close()"
+ if($LASTEXITCODE -ne 0){throw 'Malformed underlay probe failed'}
  # Authenticated client retains TUN/routes/firewall during loss and reconnect.
  Clear-Lines $vm;Clear-Lines $client;$vm.process.StandardInput.WriteLine('stop-server')
  Await-Line $vm '^LAB_SERVER_STOPPED$'
@@ -105,12 +117,28 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Linux underlay capture leak check failed'}
  Write-Output 'WINDOWS_LINUX_VM_PAIR_PASSED'
 }finally{
- if($captureStarted){pktmon stop | Out-Null;pktmon etl2pcap (Join-Path $out 'windows.etl') --out (Join-Path $out 'windows.pcapng') | Out-Null}
- if(Test-Path -LiteralPath $journal){& "$PSScriptRoot/lab-network-windows.ps1" -Action rollback -Journal $journal}
+ try{
+  if($vm -and -not $vm.process.HasExited -and -not (Test-Path (Join-Path $out 'linux-underlay.pcap'))){
+   try{
+    Clear-Lines $vm;$vm.process.StandardInput.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 10
+    Clear-Lines $vm;$vm.process.StandardInput.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 30
+    $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
+    [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
+   }catch{Write-Warning ('Failure capture unavailable: '+$_.Exception.Message)}
+  }
+  if($captureStarted){pktmon stop | Out-Null;pktmon etl2pcap (Join-Path $out 'windows.etl') --out (Join-Path $out 'windows.pcapng') | Out-Null}
+  if(Test-Path -LiteralPath $journal){
+   & "$PSScriptRoot/lab-network-windows.ps1" -Action rollback -Journal $journal
+   $rolled=Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json
+   if($rolled.phase -ne 'rolled-back' -or (Get-NetFirewallRule -Name ($rolled.id+'-*') -ErrorAction SilentlyContinue) -or (Get-DnsClientNrptRule | Where-Object Comment -eq $rolled.id)){throw 'Network rollback left owned rules'}
+   Write-Output 'LAB_NETWORK_ROLLBACK_PASSED'
+  }
+ }finally{
  foreach($record in @($client,$vm,$badProcess)){
   if($record){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit()};Pump $record;$name=if($record -eq $vm){'linux-console'}elseif($record -eq $badProcess){'bad-client'}else{'client-events'};$record.history | Set-Content (Join-Path $out ($name+'.log'));$record.error.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($name+'-stderr.log'))}
  }
  # Credentials, vendor binaries and boot image are never uploaded as results.
  Remove-Item -LiteralPath $profile,$badPath -ErrorAction SilentlyContinue
  Remove-Item Env:CONNECT_IP_LAB_VM -ErrorAction SilentlyContinue
+ }
 }

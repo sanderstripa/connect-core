@@ -100,3 +100,20 @@ native Windows tests passed after those fixes; no failing stage is labelled pass
 * Independent security review and matched performance comparisons.
 
 No Amsterdam/Danish VPS service or real server was accessed or changed.
+
+## Managed client / paired VM branch
+
+`isolated-vm-network-stage`, draft PR #4, adds fresh authenticated reconnects
+without native interface replacement, owned QUIC UDP listener cleanup, and private
+bounded pipe control. Local `go test -count=1 ./...` passed on Windows after these
+changes. Baseline Actions run 38534593178 passed Windows/Linux checks. The managed
+recovery test uses a real QUIC listener restarted on the same UDP address and an
+in-memory packet device; it proves lifecycle logic, not a VM TUN result.
+
+The new paired workflow builds a real Linux guest image and runs it in restricted
+QEMU inside a disposable Windows VM. Image preparation passed. Early paired runs
+failed: Docker-exported console placeholders prevented observable serial guest
+control, and a cleanup null path initially masked the original timeout. These
+are recorded as failures, not successful VPN trials. The corrected run is being
+checked; cross-VM data, resource measurements and Windows leakage validation are
+not yet claimed. See [VM-PAIR.md](VM-PAIR.md) for the executable stage and limits.

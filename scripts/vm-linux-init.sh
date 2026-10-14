@@ -53,6 +53,7 @@ while read -r command; do
  case "$command" in
   stop-server) kill -KILL "$server"; wait "$server" 2>/dev/null || true; echo LAB_SERVER_STOPPED ;;
   start-server) start_server ;;
+  diagnostics) cat /artifacts/server.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys
 p=pathlib.Path('/proc')/sys.argv[1]
