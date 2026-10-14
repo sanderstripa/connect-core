@@ -13,6 +13,22 @@ func TestSystemPolicyIsExplicit(t *testing.T) {
 	if !p[""].Allows(udp("10.231.0.2", "1.1.1.1", nil), true) {
 		t.Fatal("system policy did not carry IPv4 default destination")
 	}
+	if !p[""].Allows(udp("10.231.0.2", "10.232.0.1", nil), true) {
+		t.Fatal("explicit lab DNS fixture denied")
+	}
+	if p[""].Allows(udp("10.231.0.2", "10.232.0.2", nil), true) {
+		t.Fatal("lab DNS exception broadened to other private destinations")
+	}
+	managed := c
+	managed.Environment = "managed-vps"
+	managed.DeviceNetwork = "10.231.0.0/24"
+	managedPolicy, err := managed.Validate(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managedPolicy[""].Allows(udp("10.231.0.2", "10.232.0.1", nil), true) {
+		t.Fatal("laboratory private exception leaked into managed VPS policy")
+	}
 	old := c
 	old.Network = nil
 	if _, e = old.Validate(false); e == nil {

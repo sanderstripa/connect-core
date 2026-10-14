@@ -109,6 +109,15 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		}
 		prefixes = append(prefixes, p)
 	}
+	if system && c.Environment == "isolated-lab" {
+		dns := netip.MustParseAddr(c.Network.DNS)
+		if dns.IsPrivate() {
+			// Current Internet policy deliberately denies private destinations.
+			// A lab's explicitly selected DNS service is a narrow owned fixture,
+			// not permission to forward arbitrary private/metadata networks.
+			prefixes = append([]netip.Prefix{netip.PrefixFrom(dns, 32)}, prefixes...)
+		}
+	}
 	out := map[string]Policy{}
 	used := map[netip.Addr]bool{}
 	add := func(pin, s string) error {
