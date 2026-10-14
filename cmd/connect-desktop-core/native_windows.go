@@ -32,12 +32,15 @@ type nativeBridge struct {
 	done    chan struct{}
 	ack     chan uint32
 	stats   *ipvpn.Stats
+	policy  ipvpn.Policy
 }
 type nativeView struct {
-	bridge  *nativeBridge
-	packets chan []byte
-	done    chan struct{}
-	once    sync.Once
+	bridge      *nativeBridge
+	packets     chan []byte
+	done        chan struct{}
+	once        sync.Once
+	diagnostics sync.Mutex
+	rejected    map[string]uint64
 }
 
 func elevatedHelper(args string) error {
@@ -147,7 +150,8 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	if cfg.Network == nil {
 		return nil, errors.New("explicit OS network policy required")
 	}
-	if _, e := cfg.Validate(false); e != nil {
+	policies, e := cfg.Validate(false)
+	if e != nil {
 		return nil, e
 	}
 	conn, e := openHelper(ctx)
@@ -185,7 +189,7 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 		return nil, errors.New("Wintun/network setup failed; inspect or recover retained guard")
 	}
 	conn.SetDeadline(time.Time{})
-	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats}
+	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""]}
 	success = true
 	go b.read()
 	return b, nil
@@ -225,7 +229,7 @@ func (b *nativeBridge) read() {
 	}
 }
 func (b *nativeBridge) view() *nativeView {
-	v := &nativeView{bridge: b, packets: make(chan []byte, 64), done: make(chan struct{})}
+	v := &nativeView{bridge: b, packets: make(chan []byte, 64), done: make(chan struct{}), rejected: map[string]uint64{}}
 	b.mu.Lock()
 	b.active = v
 	b.mu.Unlock()
@@ -238,6 +242,20 @@ func (v *nativeView) Read(p []byte) (int, error) {
 	case <-v.bridge.done:
 		return 0, io.EOF
 	case pkt := <-v.packets:
+		src, _, err := ipvpn.Packet(pkt)
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		} else if src != v.bridge.policy.Device {
+			reason = "source differs from certificate lease"
+		} else if !v.bridge.policy.Allows(pkt, true) {
+			reason = "destination outside policy"
+		}
+		if reason != "" {
+			v.diagnostics.Lock()
+			v.rejected[reason]++
+			v.diagnostics.Unlock()
+		}
 		return copy(p, pkt), nil
 	}
 }
@@ -259,6 +277,11 @@ func (v *nativeView) Write(p []byte) (int, error) {
 // guard survive transport failure, so Windows cannot silently fall back direct.
 func (v *nativeView) Close() error {
 	v.once.Do(func() {
+		v.diagnostics.Lock()
+		for reason, count := range v.rejected {
+			fmt.Fprintf(os.Stderr, "CONNECT local packet rejection: reason=%s count=%d\n", reason, count)
+		}
+		v.diagnostics.Unlock()
 		fmt.Fprintf(os.Stderr, "CONNECT network counters: sent=%d received=%d dropped=%d\n", v.bridge.stats.Sent.Load(), v.bridge.stats.Received.Load(), v.bridge.stats.Dropped.Load())
 		v.bridge.mu.Lock()
 		if v.bridge.active == v {
