@@ -125,6 +125,18 @@ Windows NIC capture checks, then journal rollback. Its matching baseline
 passed Windows/Linux checks. Additional stricter UDP/unknown-frame capture
 assertions passed when rerun locally against the downloaded immutable artifacts.
 
+The extended final stage also passed
+[run 38544707842](https://github.com/sanderstripa/connect-core/actions/runs/38544707842)
+at 10668578202caf78183f545a84a1664aac927aac, with matching baseline
+[38544708046](https://github.com/sanderstripa/connect-core/actions/runs/38544708046).
+It independently drops/restores the Linux virtual NIC while Core remains alive,
+then repeats all traffic series, enforces stricter outgoing UDP/unknown-frame
+checks, and verifies guest PCAP SHA-256 after export. Kernel console has a
+separate UART: a real scheduler message previously corrupted base64 evidence
+on the shared console and correctly failed the stage. Capture retrieval is now
+idempotent. Downloaded final Windows captures were checked again locally, and
+the PCAP digest matches the Linux-side log.
+
 Early runs failed on the Docker-exported console placeholder, serial input,
 PowerShell null backup path, IPv6 zero-prefix parsing, non-IP adapter alias and
 fixture listen backlog. More importantly, per-NIC capture detected one last
