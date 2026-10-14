@@ -154,7 +154,7 @@ func (b *Broker) Create(name, ip string) (map[string]string, error) {
 	id := onboarding.Hash(token)
 	s := Invitation{ID: id, Name: name, IP: ip, Status: "invited", Expires: time.Now().UTC().Add(15 * time.Minute)}
 	link := (onboarding.Link{URL: b.url, Token: token, Certificate: b.tlsDER}).String()
-	png, e := qrcode.Encode(link, qrcode.Medium, 384)
+	png, e := qrcode.Encode(link, qrcode.Medium, -4)
 	if e != nil {
 		return nil, e
 	}

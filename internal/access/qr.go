@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/makiuchi-d/gozxing"
 	"github.com/makiuchi-d/gozxing/qrcode"
+	"github.com/makiuchi-d/gozxing/qrcode/decoder"
 	encoder "github.com/skip2/go-qrcode"
 	"image"
 	_ "image/jpeg"
@@ -16,7 +17,7 @@ func QR(link string) ([]byte, error) {
 	if _, e := Parse(link); e != nil {
 		return nil, e
 	}
-	return encoder.Encode(link, encoder.Medium, 384)
+	return encoder.Encode(link, encoder.Medium, -4)
 }
 func ReadQR(path string) (string, error) {
 	f, e := os.Open(path)
@@ -50,6 +51,35 @@ func ReadQR(path string) (string, error) {
 		result, e = qrcode.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true})
 	}
 	if e != nil {
+		// Earlier panel exports used a fixed 384px square, producing uneven
+		// module widths. Sample each possible standard QR grid at cell centers;
+		// the decoder still checks version bits, format and Reed-Solomon data.
+		matrix, err := bitmap.GetBlackMatrix()
+		if err == nil && cfg.Width == cfg.Height {
+			for version := 1; version <= 40; version++ {
+				dimension := 17 + 4*version
+				full := dimension + 8 // Four-module quiet zone on every edge.
+				if full > cfg.Width {
+					break
+				}
+				bits, _ := gozxing.NewBitMatrix(dimension, dimension)
+				for y := 0; y < dimension; y++ {
+					py := (2*(y+4) + 1) * cfg.Height / (2 * full)
+					for x := 0; x < dimension; x++ {
+						px := (2*(x+4) + 1) * cfg.Width / (2 * full)
+						if matrix.Get(px, py) {
+							bits.Set(x, y)
+						}
+					}
+				}
+				decoded, err := decoder.NewDecoder().Decode(bits, nil)
+				if err == nil {
+					if _, err = Parse(decoded.GetText()); err == nil {
+						return decoded.GetText(), nil
+					}
+				}
+			}
+		}
 		return "", errors.New("CONNECT QR not found")
 	}
 	s := result.GetText()
