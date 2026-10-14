@@ -17,7 +17,7 @@ function Save-Journal {
     $temporary=$Journal+'.new'
     $file=[IO.File]::Open($temporary,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try{$file.Write($bytes,0,$bytes.Length);$file.Flush($true)}finally{$file.Dispose()}
-    if(Test-Path -LiteralPath $Journal){[IO.File]::Replace($temporary,$Journal,$null)}else{[IO.File]::Move($temporary,$Journal)}
+    if(Test-Path -LiteralPath $Journal){[IO.File]::Replace($temporary,$Journal,[NullString]::Value)}else{[IO.File]::Move($temporary,$Journal)}
 }
 function Undo-Lab {
     if($state.id -notmatch '^CONNECT-LAB-[0-9a-f]{32}$' -or $state.interface -notmatch '^ccip[a-zA-Z0-9-]{1,11}$' -or $state.ip -ne '10.231.0.2'){throw 'Invalid journal ownership'}
