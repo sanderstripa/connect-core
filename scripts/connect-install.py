@@ -63,6 +63,9 @@ def check_ports(ports):
                 raise RuntimeError(f'Port {match.group(1)} is already occupied; nothing will be stopped')
     for port, kind in ports.items():
         with socket.socket(socket.AF_INET, kind) as s:
+            # Match Go's listener semantics: closed TIME_WAIT connections are
+            # not an occupied service. The ss check still rejects live listeners.
+            if kind == socket.SOCK_STREAM: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(('0.0.0.0', port))  # Detect bind failures as well as existing listeners.
 
 def ensure_fresh():

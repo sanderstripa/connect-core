@@ -20,6 +20,7 @@ async function refresh() {
   catch (e) { snapshot = null; text('server-status', 'Неизвестно'); $('server-status').className = 'badge error'; for (const id of ['core','protocol','endpoint','transport','uptime','connections','cpu','ram','disk','rx','tx','sessions']) text(id,'—'); $('devices').replaceChildren(); for (const id of ['start','stop','restart','add']) $(id).disabled = true; text('updated', 'Состояние не подтверждено'); notice(e.message); }
 }
 function render(s) {
+  text('environment',s.environment==='managed-vps' ? 'Режим VPS · CONNECT IP v2' : 'Изолированная тестовая среда · CONNECT IP v2');
   const names = { running: 'Работает', stopped: 'Остановлен', stopping: 'Останавливается', error: 'Ошибка' };
   text('server-status', names[s.status] || 'Неизвестно'); $('server-status').className = `badge ${s.status}`;
   text('core', s.core_version); text('protocol', `CONNECT IP v${s.protocol_version}`); text('endpoint', s.endpoint); text('transport', s.transport);
