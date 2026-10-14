@@ -1,5 +1,8 @@
 # CONNECT Core
 
+Separate native Windows 11 laboratory component: [CONNECT CORE client](apps/windows-core-client/README.md).
+It uses the real CONNECT IP v2 Go engine without changing system routes or the existing CONNECT application.
+
 Experimental network engine, with a separate experimental **CONNECT Protocol**.
 Two working paths in the existing Go engine: legacy loopback TCP forwarding and
 new **CONNECT IP v2**, an isolated IPv4 TUN lab using QUIC DATAGRAM + TLS 1.3 mTLS.
@@ -18,6 +21,22 @@ a native Windows Wintun DNS/QUIC round trip passed in isolated CI. The Windows
 native job uses a packet fixture as its server; Windows-VM-to-Linux-VM testing
 is a separate required gate. See [validation evidence](docs/VALIDATION.md).
 No real VPS was accessed. Amsterdam and the Danish services are untouched.
+
+## CONNECT UI
+
+CONNECT UI **0.2.0** adds a reviewed, transactional [VPS installer and updates](docs/VPS-INSTALL.md)
+and actual `connect://` enrollment links/QR. The CLI importer generates its key
+locally; an operator verifies its fingerprint before the managed CA issues a
+certificate. The protected panel/API stay on localhost; only the explicit data
+and enrollment ports are published. No existing VPN service is adopted or restarted.
+
+The separate minimal local panel and protected CONNECT IP v2 control process are
+documented in [installation, security and compatibility](docs/CONNECT-UI.md).
+`connect-control` owns its real QUIC/TUN server, supports durable hot revocation,
+CSR proof enrollment, optional managed CA issuance and real counters.
+`connect-ui` has scrypt passwords, sessions, CSRF and login rate limits; both
+administrative listeners are loopback-only. No data server starts automatically.
+See [validation and unavailable capabilities](docs/CONNECT-UI-VALIDATION.md).
 
 ## Legacy TCP lab (v1)
 
@@ -92,7 +111,8 @@ The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/
 packets, QUIC datagrams, static device leases and private destination policy.
 SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
 route/DNS/firewall management, full-device kill switch, runtime adapters and
-administration UI are **not implemented**. Other applications' traffic outside
+public/remote administration are **not implemented**. Local CONNECT UI is available
+for the managed IP v2 path described above. Other applications' traffic outside
 the lab is not covered. Namespace leak tests do not prove system-wide Windows
 VPN leak safety. Dependencies/licenses and exact reuse are documented in
 [decisions](docs/DECISIONS.md) and [refreshed audit](docs/IMPLEMENTATION-AUDIT.md).
