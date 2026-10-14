@@ -19,6 +19,12 @@ func (w *worker) enroll(path, link string) {
 		return
 	}
 	w.stop()
+	w.mu.Lock()
+	if w.code == 5 {
+		w.mu.Unlock()
+		return
+	}
+	w.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	w.mu.Lock()
 	w.cancel = cancel

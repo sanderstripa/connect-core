@@ -101,6 +101,7 @@ func run() error {
 	}
 	defer l.Close()
 	api := &management.API{Manager: m, Token: token, Host: l.Addr().String()}
+	enrollmentErrors := make(chan error, 1)
 	if cfg.IssuerKey != "" {
 		issuance, err := management.NewIssuance(m, cfg.IssuerKey, cfg.EnrollmentURL, cfg.EnrollmentTLSCert, cfg.EnrollmentTLSKey)
 		if err != nil {
@@ -114,7 +115,11 @@ func run() error {
 		enrollmentServer := &http.Server{Handler: issuance, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 8192, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
 		api.Issuance = issuance
 		defer enrollmentServer.Close()
-		go func() { _ = enrollmentServer.ServeTLS(el, cfg.EnrollmentTLSCert, cfg.EnrollmentTLSKey) }()
+		go func() {
+			if err := enrollmentServer.ServeTLS(el, cfg.EnrollmentTLSCert, cfg.EnrollmentTLSKey); err != nil && err != http.ErrServerClosed {
+				enrollmentErrors <- fmt.Errorf("enrollment HTTPS listener failed")
+			}
+		}()
 	}
 	srv := &http.Server{Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -126,7 +131,13 @@ func run() error {
 		srv.Shutdown(c)
 	}()
 	fmt.Println("CONNECT local control ready; data server is stopped")
-	e = srv.Serve(l)
+	controlErrors := make(chan error, 1)
+	go func() { controlErrors <- srv.Serve(l) }()
+	defer srv.Close()
+	select {
+	case e = <-controlErrors:
+	case e = <-enrollmentErrors:
+	}
 	if e == http.ErrServerClosed {
 		return nil
 	}

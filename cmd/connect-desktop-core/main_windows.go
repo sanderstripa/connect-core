@@ -1,6 +1,7 @@
 //go:build windows
 
-// A non-elevated, packet-only CONNECT IP v2 laboratory worker. No TUN or routes.
+// A non-elevated CONNECT IP v2 worker. System networking is delegated to a
+// separately elevated, capability-limited helper; packet mode needs no helper.
 package main
 
 import (
@@ -487,6 +488,13 @@ func main() {
 			w.enroll(path, link)
 		case desktop.Import:
 			w.stop()
+			w.mu.Lock()
+			recoveryRequired := w.code == 5
+			w.mu.Unlock()
+			if recoveryRequired {
+				w.emit()
+				continue
+			}
 			b, e := load(string(p))
 			if e == nil {
 				e = save(path, b)
