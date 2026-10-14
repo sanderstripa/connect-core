@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 const APIVersion = 1
 
 func Random() string {
@@ -52,6 +52,9 @@ func WriteJSON(path string, v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
 	if e != nil {
 		return e
+	}
+	if len(b) > 1<<20 {
+		return errors.New("state exceeds 1 MiB")
 	}
 	f, e := os.CreateTemp(filepath.Dir(path), ".connect-*")
 	if e != nil {

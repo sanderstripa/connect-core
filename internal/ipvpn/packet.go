@@ -79,6 +79,10 @@ func (p Policy) Allows(packet []byte, fromDevice bool) bool {
 	}
 	for _, prefix := range p.Destinations {
 		if prefix.Contains(remote) {
+			// Internet policy does not grant access to private networks/metadata.
+			if prefix.Bits() == 0 && (remote.IsPrivate() || !remote.IsGlobalUnicast() || netip.MustParsePrefix("100.64.0.0/10").Contains(remote) || netip.MustParsePrefix("0.0.0.0/8").Contains(remote)) {
+				return false
+			}
 			return true
 		}
 	}

@@ -6,6 +6,7 @@ Pinned sources and checksums are recorded in go.mod/go.sum. License texts:
 - WireGuard-Go TUN package ecfc5a8d5446: MIT, WireGuard LLC, third_party/licenses/wireguard-go-MIT.txt.
 - Wintun Go bindings 0fa3db229ce2: MIT, WireGuard LLC, third_party/licenses/wintun-bindings-MIT.txt.
 - Go x/crypto v0.54.0, x/net v0.56.0, x/sys v0.47.0: BSD-3-Clause, The Go Authors; corresponding x-*-BSD.txt texts.
+- skip2/go-qrcode da1b6568686e: MIT, Tom Harwood; third_party/licenses/go-qrcode-MIT.txt. Standard QR encoding of the supported connect:// enrollment format.
 
 Only the Windows TUN device binding is imported from WireGuard-Go; Linux uses
 x/sys/unix and a non-offloading native TUN. This does not embed the WireGuard

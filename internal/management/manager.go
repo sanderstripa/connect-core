@@ -70,6 +70,19 @@ func (m *Manager) event(s string) {
 		m.events = m.events[len(m.events)-100:]
 	}
 }
+func (m *Manager) UseOwnedTUN() error {
+	if m.state.Config.Environment != "managed-vps" || m.state.Config.Interface != "cc-vps0" {
+		return errors.New("managed VPS installer configuration required")
+	}
+	m.open = ipvpn.OpenOwned
+	return nil
+}
+func (m *Manager) CheckTLS() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, e := ipvpn.TLS(m.state.Config, true)
+	return e
+}
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -224,6 +237,9 @@ func (m *Manager) Change(id, action, name string) error {
 		return errors.New("unsupported device action")
 	}
 	next.Devices[id] = d
+	if action != "rename" {
+		delete(next.Config.Clients, id)
+	}
 	if e := WriteJSON(m.path, next); e != nil { // Fail closed even if fsync outcome is ambiguous.
 		if action != "rename" {
 			m.control.Deny(id)
@@ -247,6 +263,9 @@ type Settings struct {
 func (m *Manager) Configure(s Settings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.state.Config.Environment == "managed-vps" {
+		return errors.New("VPS network is installer-owned; change it through a reviewed installer transaction")
+	}
 	if m.done != nil {
 		return errors.New("stop server before changing network settings")
 	}

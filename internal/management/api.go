@@ -12,6 +12,7 @@ import (
 
 type API struct {
 	Manager    *Manager
+	Broker     *Broker
 	Token      string
 	Host       string
 	mu         sync.Mutex
@@ -46,7 +47,16 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch r.URL.Path {
 		case "/v1/status":
-			JSON(w, 200, a.Manager.Snapshot())
+			s := a.Manager.Snapshot()
+			s["onboarding_enabled"] = a.Broker != nil
+			JSON(w, 200, s)
+			return
+		case "/v1/registrations":
+			if a.Broker == nil {
+				JSON(w, 200, []Invitation{})
+				return
+			}
+			JSON(w, 200, a.Broker.List())
 			return
 		case "/v1/logs":
 			JSON(w, 200, a.Manager.Logs())
@@ -105,6 +115,57 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" {
 		switch r.URL.Path {
+		case "/v1/invite":
+			if a.Broker == nil {
+				JSON(w, 409, map[string]string{"error": "configure managed CA and HTTPS enrollment first"})
+				return
+			}
+			var v struct {
+				Name string `json:"name"`
+				IP   string `json:"ip"`
+			}
+			if Decode(w, r, &v) != nil {
+				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+				return
+			}
+			result, e := a.Broker.Create(v.Name, v.IP)
+			if e != nil {
+				fail(e)
+				return
+			}
+			JSON(w, 200, result)
+			return
+		case "/v1/registration":
+			if a.Broker == nil {
+				JSON(w, 409, map[string]string{"error": "onboarding unavailable"})
+				return
+			}
+			var v struct {
+				ID          string `json:"id"`
+				Action      string `json:"action"`
+				Fingerprint string `json:"fingerprint"`
+				Confirm     bool   `json:"confirm"`
+			}
+			if Decode(w, r, &v) != nil || !v.Confirm {
+				JSON(w, 400, map[string]string{"error": "confirmation required"})
+				return
+			}
+			var e error
+			switch v.Action {
+			case "approve":
+				e = a.Broker.Approve(v.ID, v.Fingerprint)
+			case "cancel":
+				e = a.Broker.Cancel(v.ID)
+			default:
+				JSON(w, 400, map[string]string{"error": "invalid action"})
+				return
+			}
+			if e != nil {
+				fail(e)
+				return
+			}
+			JSON(w, 200, map[string]bool{"ok": true})
+			return
 		case "/v1/server":
 			var v struct {
 				Action  string `json:"action"`

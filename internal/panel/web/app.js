@@ -57,6 +57,7 @@ function showDevice(d) {
   paragraph(body,'Закрытый ключ остаётся на устройстве: device-key.pem. Экспорт содержит только совместимый JSON и пути к локальным файлам. Для исходных устройств используйте их оригинальный сертификат.','field-note');
 }
 async function enrollment() {
+  if (snapshot?.onboarding_enabled) { invitation(); return; }
   const data = await api('/api/challenge'), body = dialog('Добавить устройство');
   paragraph(body,'Сначала проверьте владельца устройства вне панели и отпечаток его сертификата. Сертификат выпускается доверенным CA вне панели; новый CSR с этим challenge подтверждает владение закрытым ключом. Challenge действует 5 минут.','muted');
   const challenge = field(body,'Challenge для CN нового CSR',data.challenge); challenge.readOnly = true;
@@ -64,6 +65,15 @@ async function enrollment() {
   const name = field(body,'Название устройства'), ip = field(body,'Назначенный частный IPv4'), csr = field(body,'CSR PEM с указанным challenge', '', true), cert = field(body,'Сертификат клиента PEM', '', true);
   const label = document.createElement('label'), verified = document.createElement('input'); verified.type = 'checkbox'; verified.style.width = 'auto'; label.append(verified, document.createTextNode(' Я проверил владельца устройства и отпечаток сертификата')); body.append(label);
   action(body,'Проверить и добавить',async()=> { if (!verified.checked) throw new Error('Подтвердите проверку устройства'); await api('/api/enroll',{name:name.value,ip:ip.value,csr:csr.value,certificate:cert.value,challenge:data.challenge}); $('dialog').close(); await refresh(); },true);
+}
+function invitation() {
+ const body=dialog('Доступ по одноразовой ссылке'),name=field(body,'Название устройства'),ip=field(body,'Назначенный IPv4');
+ paragraph(body,'Ссылка действует 15 минут и выдаётся один раз. Клиент создаст ключ на устройстве. После сравнения отпечатка подтвердите регистрацию в панели.','field-note');
+ action(body,'Выпустить ссылку',async()=>{const v=await api('/api/invite',{name:name.value,ip:ip.value});const out=dialog('Приглашение CONNECT');const link=field(out,'connect:// — передайте только нужному владельцу',v.link,true);link.readOnly=true;const img=document.createElement('img');img.src='data:image/png;base64,'+v.qr_png;img.alt='QR одноразового приглашения CONNECT';img.width=280;img.height=280;out.append(img);action(out,'Копировать ссылку',async()=>{await navigator.clipboard.writeText(v.link);notice('Ссылка скопирована');});paragraph(out,'Импорт на устройстве: connect-core import-link NEW_DIRECTORY, затем передайте ссылку через stdin. Закрытый ключ не входит в ссылку или QR. Клиент покажет отпечаток для сравнения.','field-note');},true);
+}
+async function registrations() {
+ const list=await api('/api/registrations'),body=dialog('Регистрации устройств');if(!list.length){paragraph(body,'Запросов регистрации пока нет.');return;}
+ for(const v of list.sort((a,b)=>a.name.localeCompare(b.name))){const section=document.createElement('section');section.className='registration';body.append(section);paragraph(section,`${v.name} · ${v.ip} · ${v.status}`);paragraph(section,`Действует до ${new Date(v.expires).toLocaleString('ru-RU')}`,'field-note');if(v.status==='pending' || v.status==='issuing'){paragraph(section,`Публичный ключ: ${v.fingerprint}`,'mono');const fp=field(section,'Введите отпечаток, полученный с клиентского устройства');action(section,'Подтвердить устройство',async()=>{await api('/api/registration',{id:v.id,action:'approve',fingerprint:fp.value.trim(),confirm:true});await registrations();await refresh();},true);}if(v.status==='invited'||v.status==='pending'){action(section,'Отменить приглашение',async()=>{await api('/api/registration',{id:v.id,action:'cancel',confirm:true});await registrations();});}}
 }
 function settings() {
   if (!snapshot) { notice('Сначала получите подтверждённое состояние ядра'); return; }
@@ -80,6 +90,7 @@ $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === '
 $('logout').onclick = async () => { try { await api('/auth/logout',{}); signedOut(); } catch(e) { notice(e.message); } };
 $('close-dialog').onclick = () => $('dialog').close();
 $('settings').onclick = settings;
+$('registrations').onclick = ()=>registrations().catch(e=>notice(e.message));
 $('add').onclick = () => enrollment().catch(e=>notice(e.message));
 $('logs').onclick = async () => { try { const events = await api('/api/logs'), body=dialog('Журнал управления'), pre=document.createElement('pre'); pre.textContent=events.length ? events.join('\n') : 'Событий пока нет'; body.append(pre); } catch(e) {notice(e.message);} };
 $('start').onclick = async () => { if (pending) return; pending=true; try {await api('/api/server',{action:'start'});await refresh();} catch(e) {await refresh();notice(e.message);} finally {pending=false;} };

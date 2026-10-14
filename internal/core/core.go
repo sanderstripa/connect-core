@@ -110,9 +110,7 @@ func TLS(c Config, server bool) (*tls.Config, error) {
 	}
 	t := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}, NextProtos: []string{"connect-lab/1"}, SessionTicketsDisabled: true}
 	if server {
-		if len(c.AllowedClients) == 0 {
-			return nil, errors.New("allowed_clients is required")
-		}
+		// An empty allowlist is a valid deny-all server, useful before enrollment.
 		pins := map[string]bool{}
 		for _, pin := range c.AllowedClients {
 			b, e := hex.DecodeString(pin)
