@@ -226,9 +226,6 @@ func (w *worker) emit() {
 	}
 	binary.LittleEndian.PutUint64(p[24:], uint64(elapsed.Milliseconds()))
 	mode := uint32(0)
-	if w.b.Config.Environment == "managed-vps" && w.b.Config.Network == nil {
-		mode = 4 // Current v2 server profile needs an explicit local tunnel DNS.
-	}
 	if w.b.Config.Network != nil {
 		mode = 2
 	}
@@ -300,12 +297,6 @@ func (w *worker) connect() {
 	}
 	automaticVPN(&w.b.Config)
 	b := w.b
-	if b.Config.Environment == "managed-vps" && b.Config.Network == nil {
-		w.state = desktop.Ready
-		w.code = 11
-		w.mu.Unlock()
-		return
-	}
 	if b.Config.Version != 2 {
 		w.state = desktop.Failed
 		w.code = 1
