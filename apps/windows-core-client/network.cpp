@@ -141,6 +141,11 @@ void cleanup(){
  closeTun();if(ownEndpoint){auto current=endpointRoute;DWORD e=GetIpForwardEntry2(&current);if(e==ERROR_SUCCESS){if(current.InterfaceLuid.Value!=endpointRoute.InterfaceLuid.Value||memcmp(&current.NextHop,&endpointRoute.NextHop,sizeof(current.NextHop))||current.Metric!=endpointRoute.Metric)throw DWORD(ERROR_INVALID_DATA);check(DeleteIpForwardEntry2(&endpointRoute));}else if(e!=ERROR_NOT_FOUND)throw e;ownEndpoint=false;}
  removeGuard();DWORD removed=RegDeleteTreeW(HKEY_LOCAL_MACHINE,Journal);if(removed!=ERROR_FILE_NOT_FOUND)check(removed);
 }
+bool ownedInterfacePresent(const GUID& expected,NET_LUID old){
+ PMIB_IF_TABLE2 table=nullptr;check(GetIfTable2(&table));bool present=false,mismatch=false;
+ for(ULONG i=0;i<table->NumEntries;++i){const auto& row=table->Table[i];bool sameGuid=memcmp(&expected,&row.InterfaceGuid,sizeof(expected))==0;bool sameLuid=row.InterfaceLuid.Value==old.Value;if(sameGuid||sameLuid){if(!sameGuid||!sameLuid)mismatch=true;else present=true;}}
+ FreeMibTable(table);if(mismatch)throw DWORD(ERROR_INVALID_DATA);return present;
+}
 void removeOwnedAdapter(const GUID& expected,NET_LUID old){
  wchar_t guid[64]{};if(!StringFromGUID2(expected,guid,64))throw DWORD(ERROR_INVALID_DATA);
  HDEVINFO devices=SetupDiGetClassDevsW(&GUID_DEVCLASS_NET,nullptr,nullptr,DIGCF_PRESENT);if(devices==INVALID_HANDLE_VALUE)throw GetLastError();
@@ -155,14 +160,15 @@ void removeOwnedAdapter(const GUID& expected,NET_LUID old){
   error=ERROR_SUCCESS;break;
  }
  SetupDiDestroyDeviceInfoList(devices);if(!found||error)throw error;
- for(int i=0;i<100;++i){GUID current{};DWORD state=ConvertInterfaceLuidToGuid(&old,&current);if(state==ERROR_FILE_NOT_FOUND||state==ERROR_NOT_FOUND)return;if(state!=ERROR_SUCCESS)throw state;if(memcmp(&expected,&current,sizeof(current)))throw DWORD(ERROR_INVALID_DATA);Sleep(100);}
+ for(int i=0;i<100;++i){if(!ownedInterfacePresent(expected,old))return;Sleep(100);}
  throw DWORD(ERROR_TIMEOUT);
 }
 void recover(){
  stage=10;
  DWORD pid=0;FILETIME stored{};if(readJournal(L"HelperPID",RRF_RT_REG_DWORD,&pid,4)&&readJournal(L"Created",RRF_RT_REG_BINARY,&stored,sizeof(stored))){HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(p){FILETIME c,e,k,u;if(GetProcessTimes(p,&c,&e,&k,&u)&&memcmp(&c,&stored,sizeof(c))==0&&WaitForSingleObject(p,0)==WAIT_TIMEOUT){CloseHandle(p);throw DWORD(ERROR_BUSY);}CloseHandle(p);}}
  DWORD owned=0;if(readJournal(L"OwnEndpoint",RRF_RT_REG_DWORD,&owned,4)&&owned){if(!readJournal(L"EndpointRoute",RRF_RT_REG_BINARY,&endpointRoute,sizeof(endpointRoute))||endpointRoute.DestinationPrefix.Prefix.si_family!=AF_INET||endpointRoute.DestinationPrefix.PrefixLength!=32||!endpointRoute.InterfaceLuid.Value)throw DWORD(ERROR_INVALID_DATA);ownEndpoint=true;}
- NET_LUID old{};GUID expected{},current{};if(readJournal(L"Luid",RRF_RT_REG_BINARY,&old,sizeof(old))&&readJournal(L"AdapterGUID",RRF_RT_REG_BINARY,&expected,sizeof(expected))){DWORD e=ConvertInterfaceLuidToGuid(&old,&current);if(e==ERROR_SUCCESS){if(memcmp(&expected,&current,sizeof(current)))throw DWORD(ERROR_INVALID_DATA);removeOwnedAdapter(expected,old);}else if(e!=ERROR_FILE_NOT_FOUND&&e!=ERROR_NOT_FOUND)throw e;}
+ NET_LUID old{};GUID expected{};if(readJournal(L"Luid",RRF_RT_REG_BINARY,&old,sizeof(old))&&readJournal(L"AdapterGUID",RRF_RT_REG_BINARY,&expected,sizeof(expected))){stage=11;if(ownedInterfacePresent(expected,old)){stage=12;removeOwnedAdapter(expected,old);}}
+ stage=13;
  cleanup();
 }
 void sendPackets(){HANDLE waits[]={readEvent(session),worker};while(!stopping){++polls;DWORD size=0;BYTE* p=receivePacket(session,&size);if(p){++rawPackets;rawBytes+=size;bool ok=size<=Mtu&&frame(FromTun,p,size);releasePacket(session,p);if(!ok)break;continue;}if(GetLastError()!=ERROR_NO_MORE_ITEMS)break;DWORD event=WaitForMultipleObjects(2,waits,FALSE,250);if(event==WAIT_OBJECT_0+1)break;}if(!stopping.exchange(true)){status(4,5);CancelIoEx(pipe,nullptr);}}
