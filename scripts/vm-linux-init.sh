@@ -33,9 +33,16 @@ ip netns exec service python3 /services.py ready
 ip netns exec edge tcpdump -U -n -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
 capture=$!
 start_server(){
+ echo LAB_SERVER_STARTING
  ip netns exec edge /connect-core ip-server /lab/ip-server.json >/artifacts/server.log 2>&1 &
  server=$!
- for i in $(seq 1 200); do ip -n edge link show ccip0 >/dev/null 2>&1 && break; sleep .1; done
+ for i in $(seq 1 200); do
+  ip -n edge link show ccip0 >/dev/null 2>&1 && break
+  if ! kill -0 "$server" 2>/dev/null; then cat /artifacts/server.log; echo LAB_SERVER_FAILED; exit 1; fi
+  sleep .1
+ done
+ cat /artifacts/server.log
+ ip -n edge link show ccip0 || { echo LAB_TUN_TIMEOUT; exit 1; }
  ip -n edge addr add 10.231.0.1/32 dev ccip0
  ip -n edge link set ccip0 up
  ip -n edge route add 10.231.0.2/32 dev ccip0

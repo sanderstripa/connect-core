@@ -31,13 +31,13 @@ function Start-LabProcess([string]$file,[string[]]$arguments){
  $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true;$info.RedirectStandardInput=$true
  foreach($argument in $arguments){$info.ArgumentList.Add($argument)}
  $p=[Diagnostics.Process]::Start($info)
- return [pscustomobject]@{process=$p;pending=$p.StandardOutput.ReadLineAsync();lines=[Collections.Generic.List[string]]::new();error=$p.StandardError.ReadToEndAsync()}
+ return [pscustomobject]@{process=$p;pending=$p.StandardOutput.ReadLineAsync();lines=[Collections.Generic.List[string]]::new();history=[Collections.Generic.List[string]]::new();error=$p.StandardError.ReadToEndAsync()}
 }
 function Pump($record){
  while($record.pending -and $record.pending.IsCompleted){
   $line=$record.pending.GetAwaiter().GetResult()
   if($null -eq $line){$record.pending=$null;break}
-  $record.lines.Add($line);$record.pending=$record.process.StandardOutput.ReadLineAsync()
+  $record.lines.Add($line);$record.history.Add($line);$record.pending=$record.process.StandardOutput.ReadLineAsync()
  }
 }
 function Await-Line($record,[string]$pattern,[int]$seconds=60){
@@ -46,7 +46,7 @@ function Await-Line($record,[string]$pattern,[int]$seconds=60){
  throw "Timed out waiting for $pattern"
 }
 function Clear-Lines($record){Pump $record;$record.lines.Clear()}
-$vm=$null;$client=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json'
+$vm=$null;$client=$null;$badProcess=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
 $env:CONNECT_IP_LAB_VM='1'
 $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
 $cfg.interface='ccipvm'
@@ -91,7 +91,7 @@ try{
  $client.process.Refresh();$watch.Stop()
  @{cpu_seconds=$client.process.TotalProcessorTime.TotalSeconds-$startCpu;wall_seconds=$watch.Elapsed.TotalSeconds;working_set_bytes=$client.process.WorkingSet64;peak_working_set_bytes=$client.process.PeakWorkingSet64} | ConvertTo-Json | Set-Content (Join-Path $out 'windows-resources.json')
  Clear-Lines $vm;$vm.process.StandardInput.WriteLine('metrics');Await-Line $vm '^LAB_LINUX_METRICS '
- ($vm.lines | Where-Object {$_ -match '^LAB_LINUX_METRICS '})[-1].Substring(18) | Set-Content (Join-Path $out 'linux-resources.json')
+ @($vm.lines | Where-Object {$_ -match '^LAB_LINUX_METRICS '})[-1].Substring(18) | Set-Content (Join-Path $out 'linux-resources.json')
  # Deliberately crash Core: persistent guard must still stop direct fallback.
  $client.process.Kill();$client.process.WaitForExit()
  python "$PSScriptRoot/ip-lab-services.py" failure
@@ -107,8 +107,8 @@ try{
 }finally{
  if($captureStarted){pktmon stop | Out-Null;pktmon etl2pcap (Join-Path $out 'windows.etl') --out (Join-Path $out 'windows.pcapng') | Out-Null}
  if(Test-Path -LiteralPath $journal){& "$PSScriptRoot/lab-network-windows.ps1" -Action rollback -Journal $journal}
- foreach($record in @($client,$vm)){
-  if($record){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit()};Pump $record;$name=if($record -eq $vm){'linux-console'}else{'client-events'};$record.lines | Set-Content (Join-Path $out ($name+'.log'));$record.error.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($name+'-stderr.log'))}
+ foreach($record in @($client,$vm,$badProcess)){
+  if($record){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit()};Pump $record;$name=if($record -eq $vm){'linux-console'}elseif($record -eq $badProcess){'bad-client'}else{'client-events'};$record.history | Set-Content (Join-Path $out ($name+'.log'));$record.error.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($name+'-stderr.log'))}
  }
  # Credentials, vendor binaries and boot image are never uploaded as results.
  Remove-Item -LiteralPath $profile,$badPath -ErrorAction SilentlyContinue
