@@ -178,6 +178,8 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	kind, payload, e := desktop.Read(conn)
 	if e != nil || kind != desktop.Status || len(payload) != desktop.StatusSize || binary.LittleEndian.Uint32(payload) != desktop.Connected {
 		if e == nil && len(payload) == desktop.StatusSize {
+			// Numeric OS stage diagnostics contain neither secrets nor paths.
+			fmt.Fprintf(os.Stderr, "CONNECT network setup: Windows=%d stage=%d protection=%d\n", binary.LittleEndian.Uint32(payload[8:]), binary.LittleEndian.Uint32(payload[16:]), binary.LittleEndian.Uint32(payload[32:]))
 			return nil, fmt.Errorf("network helper setup failed: Windows=%d stage=%d protection=%d", binary.LittleEndian.Uint32(payload[8:]), binary.LittleEndian.Uint32(payload[16:]), binary.LittleEndian.Uint32(payload[32:]))
 		}
 		return nil, errors.New("Wintun/network setup failed; inspect or recover retained guard")

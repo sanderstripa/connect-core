@@ -22,6 +22,7 @@ public sealed class CorePipe {
  public volatile uint State,Code,Mode;
  public ulong TX,RX,Elapsed,DNS;
  public bool Ended;
+ public Task<string> Errors;
  private readonly object gate=new object();
  private Stream input;
  public CorePipe(string exe,string appData) {
@@ -29,7 +30,7 @@ public sealed class CorePipe {
   var info=new ProcessStartInfo(exe);info.UseShellExecute=false;info.CreateNoWindow=true;info.RedirectStandardInput=true;info.RedirectStandardOutput=true;info.RedirectStandardError=true;info.ArgumentList.Add("--ipc");info.Environment["LOCALAPPDATA"]=appData;
   Process=Process.Start(info);input=Process.StandardInput.BaseStream;
   Task.Run(()=>{var output=Process.StandardOutput.BaseStream;try{while(true){byte[] h=Read(output,8);if(h[0]!=67||h[1]!=67||h[2]!=2||h[3]!=128||BitConverter.ToUInt32(h,4)!=176)throw new IOException("Invalid typed status");byte[] b=Read(output,176);lock(gate){Code=BitConverter.ToUInt32(b,4);TX=BitConverter.ToUInt64(b,8);RX=BitConverter.ToUInt64(b,16);Elapsed=BitConverter.ToUInt64(b,24);Mode=BitConverter.ToUInt32(b,32);DNS=BitConverter.ToUInt64(b,168);State=BitConverter.ToUInt32(b,0);}}}catch{Ended=true;}});
-  Task.Run(()=>Process.StandardError.ReadToEnd());
+  Errors=Process.StandardError.ReadToEndAsync();
  }
  private static byte[] Read(Stream s,int n){byte[] b=new byte[n];int at=0;while(at<n){int got=s.Read(b,at,n-at);if(got==0)throw new EndOfStreamException();at+=got;}return b;}
  public void Send(byte kind,string data=""){byte[] p=Encoding.UTF8.GetBytes(data);byte[] h={67,67,2,kind,0,0,0,0};BitConverter.GetBytes((uint)p.Length).CopyTo(h,4);lock(gate){input.Write(h);input.Write(p);input.Flush();}}
@@ -94,6 +95,7 @@ try{
  $passed=$true
 }finally{
  if($client -and !$client.Process.HasExited){try{$client.Send(5)}catch{};if(!$client.Process.WaitForExit(10000)){$client.Process.Kill();$client.Process.WaitForExit()}}
+ if($client){$client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'network-helper.log')}
  Start-Sleep -Milliseconds 600
  $recovery=Start-Process (Join-Path $dist 'ConnectCoreNetwork.exe') -ArgumentList '--recover' -WindowStyle Hidden -PassThru -Wait
  if($recovery.ExitCode){Write-Warning "Recovery exit $($recovery.ExitCode); disposable runner retains protection"}
