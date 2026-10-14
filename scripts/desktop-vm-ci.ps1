@@ -39,13 +39,23 @@ public sealed class CorePipe {
 '@
 function StartGuest([string]$exe,[string[]]$arguments){$i=[Diagnostics.ProcessStartInfo]::new($exe);$i.UseShellExecute=$false;$i.CreateNoWindow=$true;$i.RedirectStandardError=$true;foreach($a in $arguments){$i.ArgumentList.Add($a)};return [Diagnostics.Process]::Start($i)}
 function AwaitGuest([string]$pattern,[int]$seconds=90){$deadline=[DateTime]::UtcNow.AddSeconds($seconds);while([DateTime]::UtcNow -lt $deadline){if($script:lineTask.IsCompleted){$line=$script:lineTask.GetAwaiter().GetResult();if($null -eq $line){throw 'Guest serial ended'};$script:guestLines.Add($line);$script:lineTask=$script:guestReader.ReadLineAsync();if($line -match $pattern){return}};Start-Sleep -Milliseconds 20};throw "Guest deadline: $pattern"}
+function ReceiveCapture([string]$path){
+ $offset=$guestLines.Count;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 180
+ $lines=$guestLines.GetRange($offset,$guestLines.Count-$offset)
+ $begin=$lines.IndexOf('LAB_PCAP_BEGIN');$end=$lines.IndexOf('LAB_PCAP_END')
+ if($begin -lt 0 -or $end -le $begin){throw 'Invalid guest capture framing'}
+ $bytes=[Convert]::FromBase64String(($lines.GetRange($begin+1,$end-$begin-1) -join ''))
+ $hash=@($lines | Where-Object {$_ -match '^LAB_PCAP_SHA256 [0-9a-f]{64}$'})
+ if($hash.Count -ne 1 -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLower() -ne $hash[0].Substring(16)){throw 'Guest capture hash mismatch'}
+ [IO.File]::WriteAllBytes($path,$bytes)
+}
 function AwaitCore([uint32]$state,[int]$seconds=40){$deadline=[DateTime]::UtcNow.AddSeconds($seconds);while([DateTime]::UtcNow -lt $deadline){if($client.State -eq $state){Write-Output $client.Status();return};if($client.Process.HasExited){throw 'Core exited'};if($client.State -eq 4 -and $state -eq 3){throw ('Core failed: '+$client.Status())};Start-Sleep -Milliseconds 50};throw ('Core state deadline: '+$client.Status())}
 $client=$null;$vm=$null;$listener=$null;$serial=$null;$capture=$false;$passed=$false
 $guestLines=[Collections.Generic.List[string]]::new()
 try{
  $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,17445);$listener.Start();$accept=$listener.AcceptTcpClientAsync()
  $qemu=Join-Path ${env:ProgramFiles} 'qemu/qemu-system-x86_64.exe'
- $vm=StartGuest $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-chardev','socket,id=control,host=127.0.0.1,port=17445','-serial','chardev:control','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
+ $vm=StartGuest $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-chardev','socket,id=control,host=127.0.0.1,port=17445','-serial',('file:'+(Join-Path $out 'linux-kernel.log')),'-serial','chardev:control','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
  $qemuErrors=$vm.StandardError.ReadToEndAsync()
  if(!$accept.Wait(10000)){throw 'Guest serial unavailable'};$serial=$accept.GetAwaiter().GetResult();$listener.Stop()
  $guestReader=[IO.StreamReader]::new($serial.GetStream());$guestWriter=[IO.StreamWriter]::new($serial.GetStream(),[Text.UTF8Encoding]::new($false));$guestWriter.AutoFlush=$true;$guestWriter.NewLine="`n";$lineTask=$guestReader.ReadLineAsync()
@@ -92,8 +102,7 @@ try{
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'reconnect-measurements.json');if($LASTEXITCODE){throw 'Fresh session after recovery failed'}
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Worker shutdown hung'}
- $guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 180
- $begin=$guestLines.IndexOf('LAB_PCAP_BEGIN');$end=$guestLines.IndexOf('LAB_PCAP_END');[IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($guestLines.GetRange($begin+1,$end-$begin-1) -join '')))
+ ReceiveCapture (Join-Path $out 'linux-underlay.pcap')
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'linux-capture-verification.json');if($LASTEXITCODE){throw 'Linux underlay contained plaintext'}
  $passed=$true
 }finally{
@@ -103,7 +112,7 @@ try{
  netsh wfp show filters file=$(Join-Path $out 'wfp-filters.xml') | Out-Null
  Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric | ConvertTo-Json | Set-Content (Join-Path $out 'final-routes.json')
  Get-NetIPAddress | Select-Object IPAddress,InterfaceIndex,AddressState | ConvertTo-Json | Set-Content (Join-Path $out 'final-addresses.json')
- if(!$passed -and $serial){try{$guestWriter.WriteLine('diagnostics');AwaitGuest '^LAB_DIAGNOSTICS_END$' 20;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 20;$begin=$guestLines.IndexOf('LAB_PCAP_BEGIN');$end=$guestLines.IndexOf('LAB_PCAP_END');[IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($guestLines.GetRange($begin+1,$end-$begin-1) -join '')))}catch{Write-Warning 'Guest diagnostic capture unavailable'}}
+ if(!$passed -and $serial){try{$guestWriter.WriteLine('diagnostics');AwaitGuest '^LAB_DIAGNOSTICS_END$' 20;ReceiveCapture (Join-Path $out 'linux-underlay.pcap')}catch{Write-Warning 'Guest diagnostic capture unavailable'}}
  if($client -and !$client.Process.HasExited){try{$client.Send(5)}catch{};if(!$client.Process.WaitForExit(10000)){$client.Process.Kill();$client.Process.WaitForExit()}}
  if($client){$client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'network-helper.log')}
  Start-Sleep -Milliseconds 600
