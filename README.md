@@ -150,3 +150,12 @@ as internet throughput or a comparison with other protocols.
 See [implementation audit](docs/IMPLEMENTATION-AUDIT.md),
 [architecture and validation plan](docs/ARCHITECTURE.md), and
 [wire format](docs/PROTOCOL.md).
+
+## Automatic VPS installer (0.2.1)
+
+The fresh-install path discovers the VPS IP, generates admin credentials, obtains
+and renews a trusted public IP HTTPS certificate, and prints ready access only
+when HTTPS login and independent external page checks succeed. No SSH tunnel or
+manual password creation is required. Only owned ports/resources are changed;
+occupied 80/443 or provider restrictions cause a clear failure. See
+[the current installation guide](docs/VPS-INSTALL.md).

@@ -24,8 +24,8 @@ installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(insta
 network_spec = importlib.util.spec_from_file_location('network', root / 'scripts' / 'connect-vps-network.py')
 network = importlib.util.module_from_spec(network_spec); network_spec.loader.exec_module(network)
 run = installer.run
-origin = 'http://127.0.0.1:17890'
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+origin = 'https://198.18.0.2'
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=os.environ['CONNECT_TEST_CA'])), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 csrf = ''
 def api(path, data=None):
     headers = {'Content-Type':'application/json','Origin':origin,'X-Connect-UI':'1','X-CSRF-Token':csrf}
@@ -33,8 +33,15 @@ def api(path, data=None):
     with opener.open(request, timeout=15) as response: return json.load(response)
 
 with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
-    stage = pathlib.Path(td); password = 'isolated-installer-test-password'
-    secret = stage / 'password'; secret.write_text(password+'\n'); secret.chmod(0o600)
+    stage = pathlib.Path(td)
+    # A terminal opened r+ is non-seekable: reproduce the removed old prompt.
+    import pty
+    master, slave=pty.openpty()
+    try:
+        try: open(os.ttyname(slave),'r+')
+        except OSError: pass
+        else: raise AssertionError('old tty seek failure did not reproduce')
+    finally: os.close(master);os.close(slave)
     # A real neighboring service + firewall chain survive installation/uninstall.
     neighbor = subprocess.Popen([sys.executable,'-m','http.server','17889','--bind','127.0.0.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run('iptables','-N','CONNECT_NEIGHBOR_FIXTURE');run('iptables','-A','CONNECT_NEIGHBOR_FIXTURE','-j','RETURN')
@@ -47,16 +54,28 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
     echo=subprocess.Popen(['ip','netns','exec','connect-install-fixture',str(root/'bin'/'connect-vps-probe'),'serve'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
     assert echo.stdout.readline().strip()=='ready', 'UDP service fixture not ready'
     before_firewall=network.firewall();before_routes=network.routes();before_global=pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()
-    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--source',str(root),'--endpoint','127.0.0.1:17444','--uplink','cc-eg0','--password-file',str(secret),'--yes']
+    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--source',str(root),'--endpoint','198.18.0.2:17444','--uplink','cc-eg0','--acme-directory',os.environ['CONNECT_TEST_ACME'],'--test-acme-ca',os.environ['CONNECT_TEST_CA'],'--test-probe','connect-install-fixture']
     importer = None
     try:
         # Occupied-port check rejects before accounts/services/interfaces are created.
         occupied=subprocess.run(args+['--panel-port','17889'],capture_output=True,text=True)
         assert occupied.returncode != 0 and not installer.ROOT.exists(), 'occupied port install made system changes'
-        result = subprocess.run(args,capture_output=True,text=True)
+        result = subprocess.run(['bash','-o','pipefail','-c','cat "$1" | bash -s -- "${@:2}"','--',str(root/'scripts'/'install-vps.sh'),*args[2:],'--revision',run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()],input='',capture_output=True,text=True)
         if result.returncode: raise RuntimeError('real installer failed: '+result.stderr)
+        credentials=json.loads((installer.CONFIG/'install-access.json').read_text())
+        password=credentials['password']
+        assert len(password)>=32 and credentials['username']=='admin' and credentials['panel']==origin
+        assert ('Panel: '+origin) in result.stdout and ('Login: admin') in result.stdout and ('Password: '+password) in result.stdout, 'ready credentials missing'
+        assert 'password (' not in result.stdout and 'Repeat password' not in result.stdout, 'interactive password prompt'
+        assert (installer.CONFIG/'install-access.json').stat().st_mode & 0o077 == 0, 'password persisted with public permissions'
         assert neighbor.poll() is None, 'neighbor service stopped'
         with urllib.request.urlopen('http://127.0.0.1:17889',timeout=5) as r: assert r.status==200
+        # Short-lived test certificates exercise the actual timer's renewal
+        # service: retained credentials, fresh cert and HTTPS available again.
+        certpath=installer.CONFIG/'panel-tls'/'current'/'cert.pem'
+        old_cert=certpath.read_bytes()
+        run('systemctl','start','connect-ui-cert.service')
+        assert certpath.read_bytes()!=old_cert, 'short-lived certificate not renewed'
         csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
         status=api('/api/status');assert status['status']=='running' and status['active_sessions']==0, 'fake/bootstrap session'
         invite=api('/api/invite',{'name':'Actual installer client','ip':'10.231.0.2'})
@@ -112,6 +131,21 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()==before_global, 'global forwarding changed'
         assert sorted(json.dumps(v,sort_keys=True) for v in network.routes())==sorted(json.dumps(v,sort_keys=True) for v in before_routes), 'routes not rolled back'
         assert not installer.ROOT.exists() and not installer.CONFIG.exists() and not installer.STATE.exists()
+        # Successful services do not imply externally accessible UI. A failed
+        # remote verification rolls back and MUST NOT print ready credentials.
+        original_probe=installer.remote_panel_check
+        installer.remote_panel_check=lambda m: (_ for _ in ()).throw(RuntimeError('injected unreachable panel'))
+        try:
+            import argparse,contextlib,io
+            ns=argparse.Namespace(endpoint='198.18.0.2:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=443,control_port=17891,enrollment_port=17900,yes=True,acme_directory=os.environ['CONNECT_TEST_ACME'],test_acme_ca=os.environ['CONNECT_TEST_CA'],test_probe='connect-install-fixture')
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):
+                try: installer.install(ns,'c'*40,release)
+                except RuntimeError as e: assert 'unreachable panel' in str(e)
+                else: raise AssertionError('unreachable public panel falsely succeeded')
+            assert 'Password:' not in output.getvalue() and 'successfully installed' not in output.getvalue()
+            assert not installer.ROOT.exists() and network.firewall()==before_firewall
+        finally: installer.remote_panel_check=original_probe
         # Deliberately fail after the network unit applied its own rules. The
         # install transaction must remove only its mutations, not the neighbor.
         original_run=installer.run
@@ -122,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         installer.run=fail_owned_start
         try:
             import argparse
-            ns=argparse.Namespace(endpoint='127.0.0.1:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=17890,control_port=17891,enrollment_port=17900,yes=True,password_file=str(secret))
+            ns=argparse.Namespace(endpoint='198.18.0.2:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=443,control_port=17891,enrollment_port=17900,yes=True,acme_directory=os.environ['CONNECT_TEST_ACME'],test_acme_ca=os.environ['CONNECT_TEST_CA'],test_probe='connect-install-fixture')
             try: installer.install(ns,'d'*40,release)
             except RuntimeError: pass
             else: raise AssertionError('deliberately failed install falsely succeeded')

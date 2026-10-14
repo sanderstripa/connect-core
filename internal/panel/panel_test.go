@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/sanderstripa/connect-core/internal/management"
 	"net/http"
 	"net/http/httptest"
@@ -152,5 +153,63 @@ func TestRejectPublicListeners(t *testing.T) {
 	c.CoreURL = "http://example.com:17891"
 	if _, e := New(c); e == nil {
 		t.Fatal("remote administrative API allowed")
+	}
+}
+
+func TestPublicHTTPSRequiresExplicitTLSAndCanonicalOrigin(t *testing.T) {
+	p := setup(t)
+	c := p.cfg
+	c.Listen = "198.51.100.20:443"
+	c.PublicHTTPS = true
+	if _, err := New(c); err == nil {
+		t.Fatal("plaintext public panel allowed")
+	}
+	c.TLSCert, c.TLSKey = "cert.pem", "key.pem"
+	p, err := New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.origin != "https://198.51.100.20" {
+		t.Fatal(p.origin)
+	}
+	for _, host := range []string{"198.51.100.20", "198.51.100.20:443"} {
+		r := httptest.NewRequest("GET", "https://"+host+"/", nil)
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatal(host, w.Code)
+		}
+	}
+	r := httptest.NewRequest("GET", "https://foreign.example/", nil)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatal("foreign Host accepted")
+	}
+	c.PublicHTTPS = false
+	if _, err := New(c); err == nil {
+		t.Fatal("implicit public exposure allowed")
+	}
+}
+
+func TestLoginWorkAndIPRegistryAreBounded(t *testing.T) {
+	p := setup(t)
+	for i := 0; i < cap(p.loginSlots); i++ {
+		p.loginSlots <- struct{}{}
+	}
+	if req(p, "POST", "/auth/login", `{"username":"admin","password":"password123456"}`, "", "", p.origin).Code != 429 {
+		t.Fatal("unbounded password hashing")
+	}
+	for i := 0; i < cap(p.loginSlots); i++ {
+		<-p.loginSlots
+	}
+	for i := 0; i < 4096; i++ {
+		p.attempts[fmt.Sprint(i)] = limit{Until: time.Now().Add(time.Minute)}
+	}
+	if req(p, "POST", "/auth/login", `{}`, "", "", p.origin).Code != 429 {
+		t.Fatal("unbounded IP registry")
+	}
+	if len(p.attempts) != 4096 {
+		t.Fatal("IP registry expanded")
 	}
 }

@@ -28,13 +28,33 @@ class DiscoveryTests(unittest.TestCase):
 
     @patch.object(installer, 'check_ports')
     @patch.object(installer, 'run')
+    def test_busy_https_falls_back_without_taking_over(self, run, ports):
+        run.side_effect = self.run_fixture
+        def busy(values):
+            if 443 in values: raise RuntimeError('neighbor HTTPS')
+        ports.side_effect = busy
+        args=self.args(); installer.prepare_install(args)
+        self.assertEqual(args.panel_port,80)
+
+    @patch.object(installer, 'check_ports')
+    @patch.object(installer, 'run')
+    def test_no_acme_port_refuses_without_mutating_neighbors(self, run, ports):
+        run.side_effect = self.run_fixture
+        def busy(values):
+            if 443 in values or 80 in values: raise RuntimeError('neighbor HTTP/HTTPS')
+        ports.side_effect = busy
+        with self.assertRaisesRegex(RuntimeError,'Both 443 and 80'):
+            installer.prepare_install(self.args())
+
+    @patch.object(installer, 'check_ports')
+    @patch.object(installer, 'run')
     def test_defaults_skip_neighbors_and_overlapping_routes(self, run, ports):
         run.side_effect = self.run_fixture; ports.side_effect = self.ports_fixture
         args = self.args(); installer.prepare_install(args)
         self.assertEqual(args.endpoint, '8.8.4.4:17444')
         self.assertEqual(args.uplink, 'eth0')
         self.assertEqual(args.pool, '10.233.0.0/24')
-        self.assertEqual((args.panel_port, args.control_port, args.enrollment_port), (17891, 17892, 17900))
+        self.assertEqual((args.panel_port, args.control_port, args.enrollment_port), (443, 17891, 17900))
 
     @patch.object(installer, 'check_ports')
     @patch.object(installer, 'run')
@@ -49,7 +69,7 @@ class DiscoveryTests(unittest.TestCase):
         args = self.args(control_port=17890, endpoint='127.0.0.1:17444', pool='10.240.0.0/24')
         installer.prepare_install(args)
         self.assertEqual(args.control_port, 17890)
-        self.assertEqual(args.panel_port, 17891)
+        self.assertEqual(args.panel_port, 443)
         self.assertEqual(args.endpoint, '127.0.0.1:17444')
         self.assertEqual(args.pool, '10.240.0.0/24')
 

@@ -1,7 +1,7 @@
 name: lab-checks
 on:
   push:
-    branches: [main]
+    branches: [main, 'installer/**']
   pull_request:
 permissions:
   contents: read
@@ -94,7 +94,12 @@ jobs:
       - run: bash -n scripts/install-vps.sh
       - run: python3 scripts/installer-discovery-test.py
       - run: go build -o bin/connect-vps-probe ./scripts/vps-probe.go
-      - run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_INSTALL_TEST=1 PATH="$PATH" python3 scripts/installer-smoke.py
+      - run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_INSTALL_TEST=1 PATH="$PATH" bash scripts/installer-acme-ci.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-acme-validation
+          path: installer-acme/pebble.log
       - name: Owned service diagnostics
         if: failure()
         run: sudo journalctl -u connect-core.service -u connect-ui.service -u connect-core-network.service --no-pager -n 100

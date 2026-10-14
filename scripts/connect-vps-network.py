@@ -61,6 +61,11 @@ def rules(s):
         ('nat', prefix + '_N', ['-s', pool, '-o', uplink, '-j', 'MASQUERADE'], False),
         ('nat', 'POSTROUTING', ['-s', pool, '-o', uplink, '-m', 'comment', '--comment', comment, '-j', prefix + '_N'], False),
     ]
+    if s.get('panel_port'):
+        entries += [
+            ('filter', prefix + '_I', ['-p','tcp','-d',address,'--dport',str(s['panel_port']),'-j','ACCEPT'], False),
+            ('filter', 'INPUT', ['-p','tcp','-d',address,'--dport',str(s['panel_port']),'-m','comment','--comment',comment,'-j',prefix + '_I'], True),
+        ]
     return chains, entries
 
 def apply(s, journal_path):

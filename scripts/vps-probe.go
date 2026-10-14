@@ -30,7 +30,7 @@ func run() error {
 		}
 		defer l.Close()
 		fmt.Println("ready")
-		l.SetDeadline(time.Now().Add(3 * time.Minute))
+		l.SetDeadline(time.Now().Add(15 * time.Minute))
 		buf := make([]byte, 100)
 		for {
 			n, peer, e := l.ReadFromUDP(buf)

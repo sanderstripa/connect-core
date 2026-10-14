@@ -24,7 +24,9 @@ func main() {
 	}
 }
 func readPassword() (string, error) {
-	fmt.Fprintln(os.Stderr, "Enter a password (12+ bytes) via stdin; use a private terminal/input source.")
+	if stat, err := os.Stdin.Stat(); err == nil && stat.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr, "Enter a password (12+ bytes) via stdin; use a private terminal/input source.")
+	}
 	r := bufio.NewReader(os.Stdin)
 	b, e := r.ReadString('\n')
 	if e != nil && len(b) == 0 {

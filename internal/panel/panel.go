@@ -32,6 +32,7 @@ type Config struct {
 	PasswordHash string `json:"password_hash"`
 	TLSCert      string `json:"tls_cert,omitempty"`
 	TLSKey       string `json:"tls_key,omitempty"`
+	PublicHTTPS  bool   `json:"public_https,omitempty"`
 }
 
 func Password(password, salt string) (string, error) {
@@ -59,11 +60,16 @@ type Panel struct {
 	sessions            map[string]session
 	attempts            map[string]limit
 	client              *http.Client
+	loginSlots          chan struct{}
 }
 
 func New(c Config) (*Panel, error) {
 	if e := core.Loopback(c.Listen); e != nil {
-		return nil, e
+		host, port, err := net.SplitHostPort(c.Listen)
+		ip := net.ParseIP(host)
+		if !c.PublicHTTPS || c.TLSCert == "" || c.TLSKey == "" || err != nil || ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || port == "0" {
+			return nil, errors.New("public panel requires explicit HTTPS, TLS paths and an assigned numeric IPv4")
+		}
 	}
 	u, e := url.Parse(c.CoreURL)
 	if e != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || core.Loopback(u.Host) != nil {
@@ -88,12 +94,21 @@ func New(c Config) (*Panel, error) {
 	if secure != (c.TLSKey != "") {
 		return nil, errors.New("both TLS paths required")
 	}
+	if c.PublicHTTPS && !secure {
+		return nil, errors.New("public panel cannot serve plaintext HTTP")
+	}
 	scheme := "http"
 	if secure {
 		scheme = "https"
 	}
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConnsPerHost: 4}
-	return &Panel{cfg: c, token: token, host: c.Listen, origin: scheme + "://" + c.Listen, secure: secure, sessions: map[string]session{}, attempts: map[string]limit{}, client: &http.Client{Timeout: 20 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	host := c.Listen
+	if secure {
+		if h, port, err := net.SplitHostPort(host); err == nil && port == "443" {
+			host = h
+		}
+	}
+	return &Panel{cfg: c, token: token, host: host, origin: scheme + "://" + host, secure: secure, sessions: map[string]session{}, attempts: map[string]limit{}, loginSlots: make(chan struct{}, 4), client: &http.Client{Timeout: 20 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (p *Panel) cookie(w http.ResponseWriter, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{Name: "connect_session", Value: value, Path: "/", HttpOnly: true, Secure: p.secure, SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
@@ -103,19 +118,45 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
+	if p.secure {
+		w.Header().Set("Strict-Transport-Security", "max-age=86400")
+	}
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	errJSON := func(code int, s string) { management.JSON(w, code, map[string]string{"error": s}) }
-	if r.Host != p.host {
+	if r.Host != p.host && r.Host != p.cfg.Listen {
 		errJSON(403, "invalid host")
 		return
 	}
-	if r.Method != "GET" && (r.Header.Get("Origin") != p.origin || r.Header.Get("X-Connect-UI") != "1") {
+	origin := r.Header.Get("Origin")
+	if p.secure && strings.HasSuffix(p.cfg.Listen, ":443") && origin == "https://"+p.cfg.Listen {
+		origin = p.origin
+	}
+	if r.Method != "GET" && (origin != p.origin || r.Header.Get("X-Connect-UI") != "1") {
 		errJSON(403, "same-origin request required")
 		return
 	}
 	if r.Method == "POST" && r.URL.Path == "/auth/login" {
+		select {
+		case p.loginSlots <- struct{}{}:
+			defer func() { <-p.loginSlots }()
+		default:
+			errJSON(429, "login capacity reached")
+			return
+		}
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 		p.mu.Lock()
+		if len(p.attempts) >= 4096 {
+			for key, value := range p.attempts {
+				if time.Now().After(value.Until) {
+					delete(p.attempts, key)
+				}
+			}
+			if _, known := p.attempts[ip]; !known && len(p.attempts) >= 4096 {
+				p.mu.Unlock()
+				errJSON(429, "login capacity reached")
+				return
+			}
+		}
 		a := p.attempts[ip]
 		if time.Now().After(a.Until) {
 			a = limit{Until: time.Now().Add(time.Minute)}
