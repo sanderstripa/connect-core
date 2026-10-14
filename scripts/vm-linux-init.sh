@@ -69,6 +69,7 @@ start_server(){
 }
 start_server
 while read -r command; do
+ command=$(printf '%s' "$command" | tr -d '\r')
  case "$command" in
   stop-server) kill -KILL "$server"; wait "$server" 2>/dev/null || true; echo LAB_SERVER_STOPPED ;;
   start-server) start_server ;;

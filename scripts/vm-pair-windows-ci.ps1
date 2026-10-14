@@ -34,6 +34,7 @@ function Start-LabProcess([string]$file,[string[]]$arguments){
  $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true;$info.RedirectStandardInput=$true
  foreach($argument in $arguments){$info.ArgumentList.Add($argument)}
  $p=[Diagnostics.Process]::Start($info)
+ $p.StandardInput.NewLine="`n"
  return [pscustomobject]@{process=$p;pending=$p.StandardOutput.ReadLineAsync();lines=[Collections.Generic.List[string]]::new();history=[Collections.Generic.List[string]]::new();error=$p.StandardError.ReadToEndAsync()}
 }
 function Pump($record){
@@ -65,6 +66,8 @@ try{
  Await-Line $client '"state":"ready"' 30
  & "$PSScriptRoot/lab-network-windows.ps1" -Action apply -Journal $journal -Config $profile
  # Record Windows packets as an additional artifact; Linux PCAP is analyzed.
+ pktmon list | Set-Content (Join-Path $out 'windows-components.log')
+ Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
  pktmon start --capture --comp nics --pkt-size 0 --file-name (Join-Path $out 'windows.etl') | Out-Null
  if($LASTEXITCODE -ne 0){throw 'Windows capture did not start'};$captureStarted=$true
  $startCpu=$client.process.TotalProcessorTime.TotalSeconds;$watch=[Diagnostics.Stopwatch]::StartNew()
