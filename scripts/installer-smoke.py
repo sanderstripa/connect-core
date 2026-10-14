@@ -131,6 +131,30 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()==before_global, 'global forwarding changed'
         assert sorted(json.dumps(v,sort_keys=True) for v in network.routes())==sorted(json.dumps(v,sort_keys=True) for v in before_routes), 'routes not rolled back'
         assert not installer.ROOT.exists() and not installer.CONFIG.exists() and not installer.STATE.exists()
+        # A neighbor owning 443 survives. Obtain a real IP certificate through
+        # HTTP-01 on 80, then serve/login over HTTPS on that same port only.
+        https_neighbor=subprocess.Popen([sys.executable,'-m','http.server','443','--bind','198.18.0.2'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(100):
+                try:
+                    with socket.create_connection(('198.18.0.2',443),timeout=.1): break
+                except OSError: time.sleep(.05)
+            import argparse,contextlib,io
+            ns=argparse.Namespace(endpoint='198.18.0.2:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=None,control_port=None,enrollment_port=None,yes=True,acme_directory=os.environ['CONNECT_TEST_ACME'],test_acme_ca=os.environ['CONNECT_TEST_CA'],test_probe='connect-install-fixture')
+            installer.prepare_install(ns); assert ns.panel_port==80
+            with contextlib.redirect_stdout(io.StringIO()): installer.install(ns,'b'*40,release)
+            fallback=json.loads((installer.CONFIG/'install-access.json').read_text())
+            origin='https://198.18.0.2:80'
+            assert fallback['panel']==origin and https_neighbor.poll() is None
+            csrf=api('/auth/login',{'username':'admin','password':fallback['password']})['csrf']
+            assert api('/api/status')['status']=='running'
+            try: urllib.request.urlopen('http://198.18.0.2:80',timeout=5)
+            except urllib.error.HTTPError as e: assert e.code==400
+            else: raise AssertionError('panel accepted plaintext HTTP')
+            installer.rollback_install(json.loads((installer.JOURNAL/'manifest.json').read_text()))
+            assert https_neighbor.poll() is None and network.firewall()==before_firewall
+        finally:
+            https_neighbor.terminate();https_neighbor.wait();origin='https://198.18.0.2'
         # Successful services do not imply externally accessible UI. A failed
         # remote verification rolls back and MUST NOT print ready credentials.
         original_probe=installer.remote_panel_check

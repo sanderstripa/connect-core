@@ -49,17 +49,17 @@ def save(path, value):
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 def dependencies():
+    if not pathlib.Path('/run/systemd/system').exists(): raise RuntimeError('A running systemd host is required')
+    if not pathlib.Path('/dev/net/tun').exists(): raise RuntimeError('/dev/net/tun is unavailable; enable it with the VPS provider')
     needed = ['systemctl', 'ip', 'iptables', 'sysctl', 'useradd', 'userdel', 'groupadd', 'groupdel', 'getent', 'ss', 'openssl', 'curl']
     missing = [n for n in needed if not shutil.which(n)]
     if missing and shutil.which('apt-get'):
         packages={'systemctl':'systemd','ip':'iproute2','ss':'iproute2','iptables':'iptables','sysctl':'procps','useradd':'passwd','userdel':'passwd','groupadd':'passwd','groupdel':'passwd','getent':'libc-bin','openssl':'openssl','curl':'curl'}
         print('Installing required system packages (no system upgrade)...', flush=True)
         run('apt-get','update')
-        run('apt-get','install','-y','--no-install-recommends',*sorted({packages[n] for n in missing} | {'ca-certificates'}))
+        run('apt-get','install','-y','--no-upgrade','--no-install-recommends',*sorted({packages[n] for n in missing} | {'ca-certificates'}),env=dict(os.environ,DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l'))
         missing=[n for n in needed if not shutil.which(n)]
     if missing: raise RuntimeError('Missing dependencies: '+', '.join(missing))
-    if not pathlib.Path('/run/systemd/system').exists(): raise RuntimeError('A running systemd host is required')
-    if not pathlib.Path('/dev/net/tun').exists(): raise RuntimeError('/dev/net/tun is unavailable; enable it with the VPS provider')
 
 def check_ports(ports):
     if len(set(ports)) != len(ports) or any((p < 1024 and p not in (80, 443)) or p > 65535 for p in ports):

@@ -90,10 +90,10 @@ and networking independent of Amsterdam, Xray, Sudoku and MIST.
    than silently installing PR #3's older source. For this field trial, prefer
    the reviewed pinned SHA matching the Windows ZIP. Review the displayed plan
    before confirming.
-2. Supply a separate test panel password. Review discovered IPv4, unused ports,
+2. Save the automatically generated test panel credentials. Review discovered IPv4, unused ports,
    private /24 and uplink; use explicit overrides from VPS-INSTALL.md where
    needed. Permit only selected data UDP and enrollment TCP ports in the
-   provider firewall. Keep administration on loopback through an SSH tunnel.
+   provider firewall. Use the installer's trusted public IP HTTPS panel; reserve a free 443 or 80 for ACME/panel validation.
 3. Start the matching panel, create a new invitation, import the link or its
    PNG/JPEG on the Windows VM, independently compare full key fingerprints,
    and approve. Retain no real user keys. Select a numeric tunnel DNS in the
