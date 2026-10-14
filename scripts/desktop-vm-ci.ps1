@@ -25,6 +25,7 @@ public sealed class CorePipe {
  private readonly object gate=new object();
  private Stream input;
  public CorePipe(string exe,string appData) {
+  Directory.CreateDirectory(appData);
   var info=new ProcessStartInfo(exe);info.UseShellExecute=false;info.CreateNoWindow=true;info.RedirectStandardInput=true;info.RedirectStandardOutput=true;info.RedirectStandardError=true;info.ArgumentList.Add("--ipc");info.Environment["LOCALAPPDATA"]=appData;
   Process=Process.Start(info);input=Process.StandardInput.BaseStream;
   Task.Run(()=>{var output=Process.StandardOutput.BaseStream;try{while(true){byte[] h=Read(output,8);if(h[0]!=67||h[1]!=67||h[2]!=2||h[3]!=128||BitConverter.ToUInt32(h,4)!=176)throw new IOException("Invalid typed status");byte[] b=Read(output,176);lock(gate){Code=BitConverter.ToUInt32(b,4);TX=BitConverter.ToUInt64(b,8);RX=BitConverter.ToUInt64(b,16);Elapsed=BitConverter.ToUInt64(b,24);Mode=BitConverter.ToUInt32(b,32);DNS=BitConverter.ToUInt64(b,168);State=BitConverter.ToUInt32(b,0);}}}catch{Ended=true;}});
