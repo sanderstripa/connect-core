@@ -92,6 +92,12 @@ func SPKI(cert *x509.Certificate) string {
 }
 func Redeem(ctx context.Context, i Invitation, csr string) (Response, error) {
 	var reply Response
+	if _, err := Link(i); err != nil {
+		return reply, err
+	}
+	if len(csr) > 8192 {
+		return reply, errors.New("enrollment CSR too large")
+	}
 	ep, _ := url.Parse(i.URL)
 	// Invitation SPKI is an explicit out-of-band trust anchor, including lab CAs.
 	// Standard chain verification is replaced ONLY by pin + SAN + validity checks.

@@ -1,11 +1,20 @@
 package access
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRedeemRejectsInvalidInvitationBeforeNetwork(t *testing.T) {
+	for _, i := range []Invitation{{}, {URL: "://bad"}, {URL: "http://localhost/enroll", Pin: strings.Repeat("a", 64), Token: strings.Repeat("b", 64)}} {
+		if _, err := Redeem(context.Background(), i, "CSR"); err == nil {
+			t.Fatal("invalid invitation accepted")
+		}
+	}
+}
 
 func TestInvitationAndQR(t *testing.T) {
 	i := Invitation{URL: "https://127.0.0.1:17892/enroll", Pin: strings.Repeat("a", 64), Token: strings.Repeat("b", 64)}

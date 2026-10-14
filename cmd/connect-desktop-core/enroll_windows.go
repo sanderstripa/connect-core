@@ -58,6 +58,7 @@ func (w *worker) enroll(path, link string) {
 			w.stats = nil
 			w.since = time.Time{}
 			w.elapsed = 0
+			w.dnsRTT = 0
 			_ = os.Remove(pending)
 		} else if ctx.Err() != nil {
 			w.state = desktop.Ready

@@ -339,6 +339,12 @@ func (w *worker) connect() {
 		if ctx.Err() != nil {
 			w.state = desktop.Ready
 			w.code = 0
+			// Cancellation can race with privileged setup. Without a bridge we
+			// cannot prove rollback; retain the explicit recovery requirement.
+			if setupFailed && !errors.Is(e, windows.ERROR_CANCELLED) {
+				w.state = desktop.Failed
+				w.code = 5
+			}
 		} else {
 			w.state = desktop.Failed
 			w.code = 2

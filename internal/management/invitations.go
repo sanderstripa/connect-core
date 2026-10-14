@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"github.com/sanderstripa/connect-core/internal/access"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -54,7 +55,16 @@ func NewIssuance(m *Manager, keyPath, endpoint, tlsCert, tlsKey string) (*Issuan
 	if e != nil || leaf.VerifyHostname(u.Hostname()) != nil {
 		return nil, errors.New("enrollment TLS identity mismatch")
 	}
-	raw, e := os.ReadFile(keyPath)
+	f, e := os.Open(keyPath)
+	if e != nil {
+		return nil, errors.New("issuer key unavailable")
+	}
+	defer f.Close()
+	info, e := f.Stat()
+	if e != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
+		return nil, errors.New("issuer key unavailable")
+	}
+	raw, e := io.ReadAll(io.LimitReader(f, 65537))
 	if e != nil || len(raw) > 65536 {
 		return nil, errors.New("issuer key unavailable")
 	}
