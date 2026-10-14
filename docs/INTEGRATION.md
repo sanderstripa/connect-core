@@ -1,6 +1,7 @@
 # Windows / CONNECT UI / VM integration
 
 Integration PR: https://github.com/sanderstripa/connect-core/pull/5
+Merged into main: `39e07a223e7e536463ec51a43b8e8f5a3d25a6af`. Source PRs #2/#3/#4 are included and closed; their history is retained. All three workflows now run on main pushes.
 
 Base main: `8c4bab88cac8a8a857bf8705ca129915c61c90fb`.
 Source heads: PR #2 `aebca1d3d9f5e5e4677cb7a18d44de0160776647`,
@@ -71,8 +72,7 @@ operation remain unverified. Reconnect establishes new authenticated sessions;
 it does not restore existing TCP flows transparently. Persistent deny rules
 after helper/worker crashes are not proof of boot-time isolation. Reboot,
 power-loss windows, privileged interference and rollback failure need separate
-testing. QR reads PNG/JPEG files; camera capture and Windows URL association
-are not implemented. This is not production-ready certification.
+testing. QR reads PNG/JPEG files; camera capture is absent. Optional current-user Windows URL association is available through F9. This is not production-ready certification.
 
 ## Safe next test on a separate VPS
 
@@ -81,12 +81,12 @@ Windows machine. Use a fresh disposable Linux systemd VPS with a snapshot and
 provider console, plus a separate disposable Windows VM. Keep their credentials
 and networking independent of Amsterdam, Xray, Sudoku and MIST.
 
-1. Record the reviewed final PR head's full 40-character SHA and obtain its
+1. Record the release's main commit full 40-character SHA and obtain its
    matching Windows x64 artifact. Verify ZIP/executable checksums and Wintun
    signature. Fetch scripts/install-vps.sh from that exact SHA, inspect it,
    then run `sudo bash install-vps.sh install --revision FULL_REVIEWED_SHA` on
    the disposable VPS only. The wrapper and printed update command now use the
-   integration/windows-ui-vm channel, resolved once to an immutable SHA, rather
+   main channel, resolved once to an immutable SHA, rather
    than silently installing PR #3's older source. For this field trial, prefer
    the reviewed pinned SHA matching the Windows ZIP. Review the displayed plan
    before confirming.
@@ -112,8 +112,9 @@ and networking independent of Amsterdam, Xray, Sudoku and MIST.
    final route/DNS/firewall inventory. Save failures; discard the VM/VPS if
    rollback ownership is uncertain. Do not clear global firewall rules.
 7. Treat reboot/boot-time isolation, long-duration load and public throughput
-   as new gates. Keep the integration unmerged if any required gate is failing
-   or evidence remains ambiguous. No live VPS deployment is performed by CI.
+   as separate field acceptance checks. Integration is merged after its existing
+   CI gates passed; this does not certify untested field behavior. No live VPS
+   deployment is performed by CI.
 
 See VPS-INSTALL.md for dependencies and installer options, VM-PAIR.md for the
 managed laboratory harness, and apps/windows-core-client/README.md for desktop

@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ -z $revision ]]; then
-  revision=$(curl --proto '=https' --tlsv1.2 -fsSL 'https://api.github.com/repos/sanderstripa/connect-core/commits/integration/windows-ui-vm' | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+  revision=$(curl --proto '=https' --tlsv1.2 -fsSL 'https://api.github.com/repos/sanderstripa/connect-core/commits/main' | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
   args+=(--revision "$revision")
 fi
 [[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo 'Cannot resolve an immutable CONNECT revision'; exit 1; }

@@ -18,14 +18,14 @@ iproute2, iptables и доступным `/dev/net/tun`. Ubuntu 24.04 — про
 Скопируйте команду целиком. Заменять адрес, версию или другие значения не нужно:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/integration/windows-ui-vm/scripts/install-vps.sh | sudo bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/main/scripts/install-vps.sh | sudo bash
 ```
 
 Это одна команда, но изменения не бесконтрольные: после проверок нужно ответить
 `yes` на конкретный план и ввести пароль панели дважды через скрытый терминальный
 ввод. Пароль не находится в аргументах процесса, ссылках, журнале или выводе.
-Текущая ветка — `integration/windows-ui-vm`, [интеграционный PR #5](https://github.com/sanderstripa/connect-core/pull/5).
-Команда использует канал этой ветки, пока PR не слит. Установщик один раз получает
+Текущий канал — `main`: [интеграционный PR #5](https://github.com/sanderstripa/connect-core/pull/5) слит.
+Для воспроизводимой установки используйте полный SHA релиза и `--revision`. Установщик один раз получает
 полный SHA канала через GitHub API и собирает исходники именно этого коммита;
 SHA сохраняется в журнале установки. Явный `--revision` остаётся доступен.
 Публичный IPv4 выбирается из адресов исходящего интерфейса VPS. По умолчанию
@@ -155,17 +155,19 @@ Token хранится на сервере только как SHA-256 и не �
 с тем же каталогом сохраняет тот же ключ/CSR. Просроченные записи автоматически
 очищаются при заполнении bounded registry.
 
-QR — стандартный QR с этой поддерживаемой CLI ссылкой. Автоматический Windows URL
-handler, импорт в старый native lab client из PR #2, мобильное приложение и
-автоматическая настройка всех клиентских маршрутов/DNS в этой версии отсутствуют.
-Сканер может скопировать ссылку для `import-link`; нельзя обещать, что её откроет
-произвольный существующий VPN-клиент. Протокол и wire остаются CONNECT IP v2.
-Серверный VPS-режим не отменяет прежние ограничения lab-клиента на Windows.
+QR — стандартный QR с приглашением текущей панели. Нативный Windows-клиент
+принимает ссылку из буфера (Ctrl+V или F2) и PNG/JPEG QR. F9 регистрирует
+`connect://` для текущего пользователя, если ассоциация свободна. Ключ и ожидание
+одобрения сохраняются локально через DPAPI; после одобрения клиент получает
+сертификат и профиль. Перед первым системным подключением диалог запрашивает
+числовой IPv4 DNS, доступный через туннель. Редактировать JSON не требуется.
+Подробности: [Windows client](../apps/windows-core-client/README.md).
+Протокол — CONNECT IP v2 / QUIC / mTLS. Камера и мобильный клиент отсутствуют.
 
 ## Обновление и откат
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/integration/windows-ui-vm/scripts/install-vps.sh | sudo bash -s -- update
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/main/scripts/install-vps.sh | sudo bash -s -- update
 sudo python3 /opt/connect-core/current/scripts/connect-install.py rollback
 sudo python3 /opt/connect-core/current/scripts/connect-install.py status
 ```
@@ -197,7 +199,7 @@ sudo python3 /opt/connect-core/current/scripts/connect-install.py uninstall
 контролируемое продление/новое приглашение. Старый device pin после отзыва остаётся
 tombstone, но освобождает адрес для нового сертификата; история ограничена 256 pins.
 Удалённая HTTPS публикация самой административной панели по-прежнему отдельная
-операция. Полный IPv6 и full-device Windows VPN/kill-switch не реализованы.
+операция. IPv6-туннеля нет. Windows system IPv4 и WFP fail-closed проверены на одноразовых CI VM; IPv6 вне loopback блокируется. Живой VPS + desktop, boot-time isolation и длительная нагрузка не проверены.
 
 ## Проверки
 
