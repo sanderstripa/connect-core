@@ -337,6 +337,11 @@ func recoverNative(ctx context.Context) error {
 	}
 	kind, p, e := desktop.Read(conn)
 	if e != nil || kind != desktop.Status || len(p) != desktop.StatusSize || binary.LittleEndian.Uint32(p) != desktop.Ready {
+		if e == nil && kind == desktop.Status && len(p) == desktop.StatusSize {
+			fmt.Fprintf(os.Stderr, "CONNECT network recovery: Windows=%d stage=%d\n", binary.LittleEndian.Uint32(p[8:]), binary.LittleEndian.Uint32(p[16:]))
+		} else {
+			fmt.Fprintln(os.Stderr, "CONNECT network recovery: response unavailable")
+		}
 		return errors.New("explicit network recovery failed")
 	}
 	return nil

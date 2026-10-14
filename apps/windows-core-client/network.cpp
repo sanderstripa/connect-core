@@ -159,6 +159,7 @@ void removeOwnedAdapter(const GUID& expected,NET_LUID old){
  throw DWORD(ERROR_TIMEOUT);
 }
 void recover(){
+ stage=10;
  DWORD pid=0;FILETIME stored{};if(readJournal(L"HelperPID",RRF_RT_REG_DWORD,&pid,4)&&readJournal(L"Created",RRF_RT_REG_BINARY,&stored,sizeof(stored))){HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(p){FILETIME c,e,k,u;if(GetProcessTimes(p,&c,&e,&k,&u)&&memcmp(&c,&stored,sizeof(c))==0&&WaitForSingleObject(p,0)==WAIT_TIMEOUT){CloseHandle(p);throw DWORD(ERROR_BUSY);}CloseHandle(p);}}
  DWORD owned=0;if(readJournal(L"OwnEndpoint",RRF_RT_REG_DWORD,&owned,4)&&owned){if(!readJournal(L"EndpointRoute",RRF_RT_REG_BINARY,&endpointRoute,sizeof(endpointRoute))||endpointRoute.DestinationPrefix.Prefix.si_family!=AF_INET||endpointRoute.DestinationPrefix.PrefixLength!=32||!endpointRoute.InterfaceLuid.Value)throw DWORD(ERROR_INVALID_DATA);ownEndpoint=true;}
  NET_LUID old{};GUID expected{},current{};if(readJournal(L"Luid",RRF_RT_REG_BINARY,&old,sizeof(old))&&readJournal(L"AdapterGUID",RRF_RT_REG_BINARY,&expected,sizeof(expected))){DWORD e=ConvertInterfaceLuidToGuid(&old,&current);if(e==ERROR_SUCCESS){if(memcmp(&expected,&current,sizeof(current)))throw DWORD(ERROR_INVALID_DATA);removeOwnedAdapter(expected,old);}else if(e!=ERROR_FILE_NOT_FOUND&&e!=ERROR_NOT_FOUND)throw e;}

@@ -144,7 +144,7 @@ try{
  Get-NetIPAddress | Select-Object IPAddress,InterfaceIndex,AddressState | ConvertTo-Json | Set-Content (Join-Path $out 'final-addresses.json')
  if(!$passed -and $serial){try{$guestWriter.WriteLine('diagnostics');AwaitGuest '^LAB_DIAGNOSTICS_END$' 20;ReceiveCapture (Join-Path $out 'linux-underlay.pcap')}catch{Write-Warning 'Guest diagnostic capture unavailable'}}
  if($client -and !$client.Process.HasExited){try{$client.Send(5)}catch{};if(!$client.Process.WaitForExit(10000)){$client.Process.Kill();$client.Process.WaitForExit()}}
- if($client){$client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'network-helper.log')}
+ if($client){$safeHelperLog=$client.Errors.GetAwaiter().GetResult();$safeHelperLog | Set-Content (Join-Path $out 'network-helper.log');Write-Output $safeHelperLog}
  Start-Sleep -Milliseconds 600
  if(!(RecoverWithDeadline)){
   $passed=$false
@@ -158,6 +158,7 @@ try{
  $guestLines | Set-Content (Join-Path $out 'linux-console.log')
  if($qemuErrors){$qemuErrors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'qemu-errors.log')}
  if($serial){$serial.Dispose()};if($listener){$listener.Stop()}
+ Clear-DnsClientCache
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json | Set-Content (Join-Path $out 'after-adapters.json')
 }
 if(!$passed){throw 'System VPN validation did not complete; no artifact may be promoted'}
