@@ -19,6 +19,7 @@ import (
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"
 	"github.com/sanderstripa/connect-core/internal/management"
+	qrencoder "github.com/skip2/go-qrcode"
 )
 
 func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
@@ -67,6 +68,17 @@ func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
 	link, err := access.ReadQR(qrPath)
 	if err != nil || link != invite["link"] {
 		t.Fatalf("current panel QR is incompatible: %v", err)
+	}
+	legacyRaster, err := qrencoder.Encode(link, qrencoder.Medium, 384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(qrPath, legacyRaster, 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacyLink, err := access.ReadQR(qrPath)
+	if err != nil || legacyLink != link {
+		t.Fatalf("existing fixed-size panel QR is incompatible: %v", err)
 	}
 	w := &worker{writer: io.Discard}
 	defer w.stop()
