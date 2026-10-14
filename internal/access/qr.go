@@ -45,6 +45,11 @@ func ReadQR(path string) (string, error) {
 	}
 	result, e := qrcode.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_TRY_HARDER: true})
 	if e != nil {
+		// The panel exports a clean, dense QR raster. Pure extraction avoids
+		// finder-detector ambiguity; photographed codes use the first path.
+		result, e = qrcode.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true})
+	}
+	if e != nil {
 		return "", errors.New("CONNECT QR not found")
 	}
 	s := result.GetText()

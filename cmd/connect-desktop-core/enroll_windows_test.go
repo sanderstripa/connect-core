@@ -66,7 +66,7 @@ func TestCurrentPanelQRApprovalAndProtectedResume(t *testing.T) {
 	}
 	link, err := access.ReadQR(qrPath)
 	if err != nil || link != invite["link"] {
-		t.Fatal("current panel QR is incompatible")
+		t.Fatalf("current panel QR is incompatible: %v", err)
 	}
 	w := &worker{writer: io.Discard}
 	defer w.stop()
