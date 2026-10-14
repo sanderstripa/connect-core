@@ -21,6 +21,14 @@ type Config struct {
 	Clients      map[string]string `json:"clients,omitempty"` // Certificate SHA-256 -> assigned IPv4.
 	Destinations []string          `json:"destinations"`
 	Trust        core.Config       `json:"trust"`
+	Network      *NetworkPolicy    `json:"network,omitempty"`
+}
+
+// Optional local OS policy, preserving the existing CONNECT IP v2 wire format.
+// IPv6 is blocked by the Windows helper; this engine carries IPv4 only.
+type NetworkPolicy struct {
+	Mode string `json:"mode"`
+	DNS  string `json:"dns"`
 }
 
 func Load(path string) (Config, error) {
@@ -52,9 +60,22 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 	if c.Version != 2 || c.Environment != "isolated-lab" {
 		return nil, errors.New("requires config_version 2 and environment isolated-lab")
 	}
+	system := c.Network != nil
+	if system {
+		if c.Network.Mode != "system-vpn" || len(c.Destinations) != 1 || c.Destinations[0] != "0.0.0.0/0" {
+			return nil, errors.New("system VPN requires explicit IPv4 default policy")
+		}
+		dns, e := netip.ParseAddr(c.Network.DNS)
+		if e != nil || !unicast(dns) {
+			return nil, errors.New("numeric unicast tunnel DNS required")
+		}
+	}
 	ap, e := netip.ParseAddrPort(c.Endpoint)
-	if e != nil || !ap.Addr().Is4() || ap.Port() == 0 || !(ap.Addr().IsLoopback() || ap.Addr().IsPrivate()) {
+	if e != nil || !ap.Addr().Is4() || ap.Port() == 0 || !(ap.Addr().IsLoopback() || ap.Addr().IsPrivate() || system && unicast(ap.Addr())) {
 		return nil, errors.New("numeric loopback/private IPv4 lab endpoint required")
+	}
+	if system && netip.MustParseAddr(c.Network.DNS) == ap.Addr() {
+		return nil, errors.New("DNS must differ from the underlay endpoint")
 	}
 	if len(c.Interface) < 1 || len(c.Interface) > 15 {
 		return nil, errors.New("interface name must be 1..15 characters")
@@ -71,10 +92,10 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 	for _, s := range c.Destinations {
 		p, e := netip.ParsePrefix(s)
 		// Narrow private lab networks only: prevent accidental internet/open forwarding.
-		if e != nil || !p.Addr().Is4() || !p.Addr().IsPrivate() || p.Bits() < 24 || p != p.Masked() {
+		if e != nil || !p.Addr().Is4() || (!system && (!p.Addr().IsPrivate() || p.Bits() < 24)) || p != p.Masked() {
 			return nil, errors.New("destinations require canonical private IPv4 /24 or narrower")
 		}
-		if p.Contains(ap.Addr()) {
+		if !system && p.Contains(ap.Addr()) {
 			return nil, errors.New("endpoint must be outside destination policy")
 		}
 		prefixes = append(prefixes, p)
@@ -90,6 +111,9 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 			return errors.New("duplicate device/endpoint IP")
 		}
 		for _, p := range prefixes {
+			if system {
+				continue
+			}
 			if p.Contains(ip) {
 				return errors.New("device IP overlaps destinations")
 			}

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderstripa/connect-core/internal/access"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"golang.org/x/sys/windows"
@@ -188,9 +189,11 @@ type worker struct {
 	cancel      context.CancelFunc
 	done        chan struct{}
 	device      *packetDevice
+	native      *nativeBridge
 	stats       *ipvpn.Stats
 	since       time.Time
 	elapsed     time.Duration
+	dnsRTT      uint64
 	output      sync.Mutex
 	writer      io.Writer
 }
@@ -209,7 +212,19 @@ func (w *worker) emit() {
 		elapsed = time.Since(w.since)
 	}
 	binary.LittleEndian.PutUint64(p[24:], uint64(elapsed.Milliseconds()))
-	copy(p[32:], w.b.Config.Endpoint)
+	mode := uint32(0)
+	if w.b.Config.Network != nil {
+		mode = 2
+	}
+	if w.native != nil {
+		mode = 1
+	}
+	if w.code == 5 {
+		mode = 3
+	}
+	binary.LittleEndian.PutUint32(p[32:], mode)
+	copy(p[36:], w.b.Config.Endpoint)
+	binary.LittleEndian.PutUint64(p[168:], w.dnsRTT)
 	w.mu.Unlock()
 	w.output.Lock()
 	defer w.output.Unlock()
@@ -230,14 +245,35 @@ func (w *worker) stop() {
 		<-done
 	}
 	w.mu.Lock()
+	native, oldCode := w.native, w.code
+	w.mu.Unlock()
+	var cleanup error
+	if native != nil {
+		cleanup = native.shutdown()
+	}
+	if native == nil && oldCode == 5 {
+		cleanup = errors.New("explicit recovery required")
+	}
+	w.mu.Lock()
 	w.cancel = nil
 	w.device = nil
 	w.state = desktop.Ready
+	if cleanup == nil {
+		w.native = nil
+		w.code = 0
+	} else {
+		w.state = desktop.Failed
+		w.code = 5
+	}
 	w.mu.Unlock()
 }
 func (w *worker) connect() {
 	w.stop()
 	w.mu.Lock()
+	if w.code == 5 {
+		w.mu.Unlock()
+		return
+	}
 	b := w.b
 	if b.Config.Version != 2 {
 		w.state = desktop.Failed
@@ -255,10 +291,20 @@ func (w *worker) connect() {
 	stats := w.stats
 	w.since = time.Time{}
 	w.elapsed = 0
+	w.dnsRTT = 0
 	w.mu.Unlock()
 	go func() {
 		defer close(done)
 		t, e := b.tls()
+		var native *nativeBridge
+		setupFailed := false
+		if e == nil && b.Config.Network != nil {
+			native, e = openNative(ctx, b.Config, stats)
+			setupFailed = e != nil
+			w.mu.Lock()
+			w.native = native
+			w.mu.Unlock()
+		}
 		if e == nil {
 			var policies map[string]ipvpn.Policy
 			policies, e = b.Config.Validate(false)
@@ -266,9 +312,16 @@ func (w *worker) connect() {
 				c, err := ipvpn.Dial(ctx, b.Config.Endpoint, t, policies[""].Device)
 				e = err
 				if e == nil {
-					d := newDevice()
+					var d ipvpn.Device
+					var packet *packetDevice
+					if native != nil {
+						d = native.view()
+					} else {
+						packet = newDevice()
+						d = packet
+					}
 					w.mu.Lock()
-					w.device = d
+					w.device = packet
 					w.state = desktop.Connected
 					w.since = time.Now()
 					w.mu.Unlock()
@@ -289,6 +342,19 @@ func (w *worker) connect() {
 		} else {
 			w.state = desktop.Failed
 			w.code = 2
+			if native != nil {
+				select {
+				case <-native.done:
+					w.code = 5
+				default:
+				}
+			}
+			if setupFailed {
+				w.code = 5
+				if errors.Is(e, windows.ERROR_CANCELLED) {
+					w.code = 7
+				}
+			}
 			if e != nil {
 				var certErr *tls.CertificateVerificationError
 				if errors.As(e, &certErr) {
@@ -304,6 +370,10 @@ func (w *worker) connect() {
 func (w *worker) probe() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.state == desktop.Connected && w.b.Config.Network != nil {
+		go w.probeDNS(w.b.Config, w.stats)
+		return
+	}
 	if w.state != desktop.Connected || w.device == nil {
 		return
 	}
@@ -379,10 +449,36 @@ func main() {
 		if e != nil {
 			return
 		}
-		if kind != desktop.Import && len(p) != 0 {
+		if kind != desktop.Import && kind != desktop.ImportURI && kind != desktop.ImportQR && len(p) != 0 {
 			return
 		}
 		switch kind {
+		case desktop.Recover:
+			w.stop()
+			err := recoverNative(context.Background())
+			w.mu.Lock()
+			if err == nil {
+				w.native = nil
+				w.state = desktop.Ready
+				w.code = 0
+			} else {
+				w.state = desktop.Failed
+				w.code = 5
+			}
+			w.mu.Unlock()
+		case desktop.ImportURI, desktop.ImportQR:
+			link := string(p)
+			if kind == desktop.ImportQR {
+				link, e = access.ReadQR(link)
+				if e != nil {
+					w.mu.Lock()
+					w.code = 4
+					w.mu.Unlock()
+					w.emit()
+					continue
+				}
+			}
+			w.enroll(path, link)
 		case desktop.Import:
 			w.stop()
 			b, e := load(string(p))

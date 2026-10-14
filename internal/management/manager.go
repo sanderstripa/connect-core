@@ -21,9 +21,10 @@ type Device struct {
 	ipvpn.Usage
 }
 type State struct {
-	Version int               `json:"version"`
-	Config  ipvpn.Config      `json:"config"`
-	Devices map[string]Device `json:"devices"`
+	Version     int                         `json:"version"`
+	Config      ipvpn.Config                `json:"config"`
+	Devices     map[string]Device           `json:"devices"`
+	Invitations map[string]InvitationRecord `json:"invitations,omitempty"`
 }
 type Manager struct {
 	mu      sync.Mutex
@@ -190,6 +191,10 @@ func clone(s State) State {
 		out.Devices[k] = v
 	}
 	out.Config.Clients = map[string]string{}
+	out.Invitations = map[string]InvitationRecord{}
+	for k, v := range s.Invitations {
+		out.Invitations[k] = v
+	}
 	for k, v := range s.Config.Clients {
 		out.Config.Clients[k] = v
 	}

@@ -3,6 +3,7 @@ package management
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"github.com/sanderstripa/connect-core/internal/access"
 	"io"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ type API struct {
 	Host       string
 	mu         sync.Mutex
 	challenges map[string]time.Time
+	Issuance   *Issuance
 }
 
 func JSON(w http.ResponseWriter, status int, v any) {
@@ -105,6 +107,42 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" {
 		switch r.URL.Path {
+		case "/v1/invitation":
+			if a.Issuance == nil {
+				JSON(w, 409, map[string]string{"error": "automatic issuance is not configured"})
+				return
+			}
+			var v struct {
+				Name string `json:"name"`
+				IP   string `json:"ip"`
+			}
+			if Decode(w, r, &v) != nil {
+				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+				return
+			}
+			link, e := a.Issuance.Invite(v.Name, v.IP)
+			if e != nil {
+				fail(e)
+				return
+			}
+			JSON(w, 200, map[string]any{"link": link, "expires_in": 300})
+			return
+		case "/v1/invitation-qr":
+			var v struct {
+				Link string `json:"link"`
+			}
+			if Decode(w, r, &v) != nil {
+				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+				return
+			}
+			png, e := access.QR(v.Link)
+			if e != nil {
+				JSON(w, 400, map[string]string{"error": "invalid invitation"})
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(png)
+			return
 		case "/v1/server":
 			var v struct {
 				Action  string `json:"action"`

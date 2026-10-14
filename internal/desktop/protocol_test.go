@@ -14,7 +14,7 @@ func TestFrames(t *testing.T) {
 	if e != nil || kind != Import || string(p) != "configuration" {
 		t.Fatal("round trip")
 	}
-	for _, v := range [][]byte{{'C', 'C', 2, 1, 0, 0, 0, 0}, {'C', 'C', 1, 1, 255, 255, 255, 255}, {'C', 'C', 1, 1, 1, 0, 0, 0}} {
+	for _, v := range [][]byte{{'C', 'C', Version + 1, 1, 0, 0, 0, 0}, {'C', 'C', 1, 1, 255, 255, 255, 255}, {'C', 'C', 1, 1, 1, 0, 0, 0}} {
 		if _, _, e := Read(bytes.NewReader(v)); e == nil {
 			t.Fatal("accepted invalid frame")
 		}

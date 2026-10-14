@@ -7,15 +7,21 @@ import (
 	"io"
 )
 
-const Version = 1
+const Version = 2
 const MaxPayload = 32768
 const (
-	Import     byte = 1
-	Connect    byte = 2
-	Disconnect byte = 3
-	Probe      byte = 4
-	Exit       byte = 5
-	Status     byte = 128
+	Import           byte = 1
+	Connect          byte = 2
+	Disconnect       byte = 3
+	Probe            byte = 4
+	Exit             byte = 5
+	ImportURI        byte = 6
+	ImportQR         byte = 7
+	Recover          byte = 8
+	ConfigureNetwork byte = 32
+	FromTUN          byte = 33
+	ToTUN            byte = 34
+	Status           byte = 128
 )
 const (
 	Idle uint32 = iota
@@ -23,10 +29,11 @@ const (
 	Connecting
 	Connected
 	Failed
+	Enrolling = 6
 )
 
 // Status payload: state/code uint32, TX/RX/elapsed uint64, endpoint[128].
-const StatusSize = 160
+const StatusSize = 176
 
 func Read(r io.Reader) (byte, []byte, error) {
 	var h [8]byte

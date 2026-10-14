@@ -86,3 +86,22 @@ $('start').onclick = async () => { if (pending) return; pending=true; try {await
 for (const id of ['stop','restart']) $(id).onclick = () => confirmAction(id==='stop' ? 'Остановить сервер?' : 'Перезапустить сервер?', 'Все активные подключения будут закрыты.',()=>api('/api/server',{action:id,confirm:true}));
 (async()=> { try { const s=await api('/auth/session');csrf=s.csrf;signedIn();await refresh(); } catch { signedOut(); } })();
 setInterval(()=> {if(csrf && !pending && !$('dialog').open) refresh();},5000);
+
+$('invite').onclick = () => {
+  const body = dialog('Одноразовый доступ'), name = field(body,'Название устройства'), ip = field(body,'Назначенный IPv4');
+  const note = document.createElement('p'); note.textContent = 'Передайте приглашение только владельцу устройства. Оно действует 5 минут и используется один раз. Windows-клиент создаёт закрытый ключ у себя; панель его не получает.'; body.append(note);
+  const create = document.createElement('button'); create.textContent = 'Выдать приглашение'; body.append(create);
+  create.onclick = async () => {
+    create.disabled = true;
+    try {
+      const result = await api('/api/invitation',{name:name.value,ip:ip.value});
+      const link = field(body,'connect://',result.link,true); link.readOnly = true;
+      const res = await fetch('/api/invitation-qr',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Connect-UI':'1','X-CSRF-Token':csrf},body:JSON.stringify({link:result.link})});
+      if(!res.ok) throw new Error('Не удалось создать QR');
+      const bitmap = await createImageBitmap(await res.blob()), canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height; canvas.style.maxWidth = '100%'; canvas.getContext('2d').drawImage(bitmap,0,0); bitmap.close(); body.append(canvas);
+      const copy=document.createElement('button');copy.textContent='Копировать ссылку';copy.onclick=()=>navigator.clipboard.writeText(result.link).catch(()=>{link.focus();link.select();});body.append(copy);
+      const download=document.createElement('button');download.textContent='Сохранить QR';download.onclick=()=>canvas.toBlob(blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='connect-invitation.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});body.append(download);
+      create.remove(); note.textContent='Приглашение выдано. После регистрации устройство появится в общем списке. Потерянный ответ требует нового приглашения; токен повторно не используется.';
+    }catch(e){notice(e.message);create.disabled=false;}
+  };
+};

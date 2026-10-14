@@ -19,6 +19,18 @@ jobs:
       - run: cmake -S apps/windows-core-client -B build/desktop -A x64
       - run: cmake --build build/desktop --config Release
       - run: Copy-Item build/desktop/Release/ConnectCore.exe dist/
+      - run: Copy-Item build/desktop/Release/ConnectCoreNetwork.exe dist/
+      - name: Verify and package official Wintun
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile build/wintun.zip
+          if ((Get-FileHash build/wintun.zip -Algorithm SHA256).Hash -ne '07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51') { throw 'Wintun archive checksum mismatch' }
+          Expand-Archive build/wintun.zip build/wintun -Force
+          $dll = 'build/wintun/wintun/bin/amd64/wintun.dll'
+          $signature = Get-AuthenticodeSignature $dll
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=WireGuard LLC') { throw 'Wintun publisher rejected' }
+          Copy-Item $dll dist/
+          Copy-Item build/wintun/wintun/LICENSE.txt dist/WINTUN-LICENSE.txt
       - run: ./scripts/desktop-smoke.ps1 -Directory dist
       - name: Include instructions, notices and checksums
         shell: pwsh

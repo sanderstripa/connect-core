@@ -74,7 +74,7 @@ func TestPrivateIPCImportCancelAndEOF(t *testing.T) {
 			if ending == "unknown" {
 				desktop.Write(stdin, 99, nil)
 			} else if ending == "bad-frame" {
-				stdin.Write([]byte{'C', 'C', 2, 1, 0, 0, 0, 0})
+				stdin.Write([]byte{'C', 'C', desktop.Version + 1, 1, 0, 0, 0, 0})
 			} else {
 				desktop.Write(stdin, desktop.Disconnect, nil)
 				readState(desktop.Ready)

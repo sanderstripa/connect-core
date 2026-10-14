@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -18,9 +19,14 @@ import (
 )
 
 type config struct {
-	Listen    string `json:"listen"`
-	TokenFile string `json:"token_file"`
-	StateFile string `json:"state_file"`
+	Listen            string `json:"listen"`
+	TokenFile         string `json:"token_file"`
+	StateFile         string `json:"state_file"`
+	EnrollmentListen  string `json:"enrollment_listen,omitempty"`
+	EnrollmentURL     string `json:"enrollment_url,omitempty"`
+	EnrollmentTLSCert string `json:"enrollment_tls_cert,omitempty"`
+	EnrollmentTLSKey  string `json:"enrollment_tls_key,omitempty"`
+	IssuerKey         string `json:"issuer_key,omitempty"`
 }
 
 func main() {
@@ -95,6 +101,21 @@ func run() error {
 	}
 	defer l.Close()
 	api := &management.API{Manager: m, Token: token, Host: l.Addr().String()}
+	if cfg.IssuerKey != "" {
+		issuance, err := management.NewIssuance(m, cfg.IssuerKey, cfg.EnrollmentURL, cfg.EnrollmentTLSCert, cfg.EnrollmentTLSKey)
+		if err != nil {
+			return err
+		}
+		el, err := net.Listen("tcp", cfg.EnrollmentListen)
+		if err != nil {
+			return err
+		}
+		defer el.Close()
+		enrollmentServer := &http.Server{Handler: issuance, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 8192, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+		api.Issuance = issuance
+		defer enrollmentServer.Close()
+		go func() { _ = enrollmentServer.ServeTLS(el, cfg.EnrollmentTLSCert, cfg.EnrollmentTLSKey) }()
+	}
 	srv := &http.Server{Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()

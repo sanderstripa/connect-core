@@ -227,7 +227,7 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
-	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings")
+	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings" || path == "/api/invitation" || path == "/api/invitation-qr")
 	if !allowed {
 		errJSON(404, "unsupported route or method")
 		return

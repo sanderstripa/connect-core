@@ -29,7 +29,7 @@ func run() error {
 		return fmt.Errorf("usage: connect-core {init-lab|server|client|http-lab|ip-server|ip-client} {directory|config.json|127.0.0.1:port}")
 	}
 	mode, path := os.Args[1], os.Args[2]
-	if mode == "init-lab" {
+	if mode == "init-lab" || mode == "init-enrollment-lab" {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			return fmt.Errorf("choose a new lab directory")
 		}
@@ -37,7 +37,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		s, c, err := lab.Generate(absolute)
+		generate := lab.Generate
+		if mode == "init-enrollment-lab" {
+			generate = lab.GenerateIssuance
+		}
+		s, c, err := generate(absolute)
 		if err != nil {
 			return err
 		}

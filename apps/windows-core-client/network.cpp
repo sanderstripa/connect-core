@@ -1,0 +1,139 @@
+// CONNECT's elevated network capability. No TLS credentials, shell commands,
+// browser, public listener or arbitrary file/route operations are accepted.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
+#include <fwpmu.h>
+#include <shellapi.h>
+#include <wintrust.h>
+#include <softpub.h>
+#include <string>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+
+namespace {
+constexpr uint8_t Configure=32,FromTun=33,ToTun=34,Exit=5,Status=128;
+constexpr DWORD Mtu=1100;
+const GUID Sublayer={0x304497e9,0x426e,0x4f42,{0x8a,0x25,0x3a,0x88,0x52,0x5e,0x71,0xc0}};
+const wchar_t* Journal=L"SOFTWARE\\ConnectCoreLab\\NetworkJournal";
+HANDLE pipe=INVALID_HANDLE_VALUE,engine=nullptr,adapter=nullptr,session=nullptr,worker=nullptr;
+HANDLE controlThread=nullptr;
+HMODULE wintun=nullptr;NET_LUID luid{};GUID adapterGuid{};MIB_IPFORWARD_ROW2 endpointRoute{};bool ownEndpoint=false,guard=false;
+std::mutex outputMutex;std::atomic<bool> stopping=false;
+HANDLE (WINAPI *createAdapter)(LPCWSTR,LPCWSTR,const GUID*);
+void (WINAPI *closeAdapter)(HANDLE);
+void (WINAPI *getLuid)(HANDLE,NET_LUID*);
+HANDLE (WINAPI *startSession)(HANDLE,DWORD);
+void (WINAPI *endSession)(HANDLE);
+BYTE* (WINAPI *receivePacket)(HANDLE,DWORD*);
+void (WINAPI *releasePacket)(HANDLE,BYTE*);
+BYTE* (WINAPI *allocatePacket)(HANDLE,DWORD);
+void (WINAPI *sendPacket)(HANDLE,BYTE*);
+HANDLE (WINAPI *readEvent)(HANDLE);
+#pragma pack(push,1)
+struct Plan {uint32_t version,endpoint,device,dns;uint16_t port,mode;};
+#pragma pack(pop)
+static_assert(sizeof(Plan)==20);
+GUID filterKey(int n){GUID g=Sublayer;g.Data4[7]=static_cast<BYTE>(0xc1+n);return g;}
+void check(DWORD value){if(value!=ERROR_SUCCESS)throw value;}
+bool readExact(void* p,DWORD size){auto b=static_cast<BYTE*>(p);while(size){DWORD n=0;if(!ReadFile(pipe,b,size,&n,nullptr)||!n)return false;b+=n;size-=n;}return true;}
+bool frame(uint8_t kind,const void* p,DWORD size){std::lock_guard<std::mutex> lock(outputMutex);BYTE h[8]={'C','C',2,kind};memcpy(h+4,&size,4);DWORD n=0;if(!WriteFile(pipe,h,8,&n,nullptr)||n!=8)return false;return !size||(WriteFile(pipe,p,size,&n,nullptr)&&n==size);}
+void status(uint32_t state,uint32_t code=0){BYTE b[176]{};memcpy(b,&state,4);memcpy(b+4,&code,4);uint32_t mode=guard?1:0;memcpy(b+32,&mode,4);frame(Status,b,sizeof(b));}
+std::wstring executable(){wchar_t path[32768];DWORD n=GetModuleFileNameW(nullptr,path,32768);if(!n||n==32768)throw DWORD(ERROR_BAD_PATHNAME);return std::wstring(path,n);}
+std::wstring adjacent(const wchar_t* name){auto p=executable();return p.substr(0,p.find_last_of(L"\\/")+1)+name;}
+bool privateIP(uint32_t ip){uint32_t h=ntohl(ip);return (h>>24)==10||(h>>20)==0xac1||(h>>16)==0xc0a8;}
+bool unicast(uint32_t ip){uint32_t h=ntohl(ip);return h&&h!=0xffffffff&&(h>>24)!=127&&(h>>28)<14&&(h>>16)!=0xa9fe;}
+bool loopback(uint32_t ip){return (ntohl(ip)>>24)==127;}
+void validate(const Plan& p){if(p.version!=1||p.mode!=1||!p.port||(!unicast(p.endpoint)&&!loopback(p.endpoint))||!privateIP(p.device)||!unicast(p.dns)||p.device==p.endpoint||p.dns==p.device||p.dns==p.endpoint)throw DWORD(ERROR_INVALID_DATA);}
+void trustedDLL(){
+ auto path=adjacent(L"wintun.dll");WINTRUST_FILE_INFO file{sizeof(file)};file.pcwszFilePath=path.c_str();WINTRUST_DATA trust{sizeof(trust)};trust.dwUIChoice=WTD_UI_NONE;trust.fdwRevocationChecks=WTD_REVOKE_NONE;trust.dwUnionChoice=WTD_CHOICE_FILE;trust.pFile=&file;trust.dwStateAction=WTD_STATEACTION_VERIFY;trust.dwProvFlags=WTD_CACHE_ONLY_URL_RETRIEVAL;GUID action=WINTRUST_ACTION_GENERIC_VERIFY_V2;
+ LONG result=WinVerifyTrust(nullptr,&action,&trust);bool publisher=false;
+ if(result==ERROR_SUCCESS){auto provider=WTHelperProvDataFromStateData(trust.hWVTStateData);auto signer=WTHelperGetProvSignerFromChain(provider,0,FALSE,0);if(signer&&signer->csCertChain){wchar_t subject[512]{};CertGetNameStringW(signer->pasCertChain[0].pCert,CERT_NAME_SIMPLE_DISPLAY_TYPE,0,nullptr,subject,512);publisher=std::wstring(subject)==L"WireGuard LLC";}}
+ trust.dwStateAction=WTD_STATEACTION_CLOSE;WinVerifyTrust(nullptr,&action,&trust);if(result!=ERROR_SUCCESS||!publisher)throw DWORD(ERROR_INVALID_SIGNATURE);
+ wintun=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);if(!wintun)throw GetLastError();
+#define LOAD(name,exportName) name=reinterpret_cast<decltype(name)>(GetProcAddress(wintun,exportName));if(!name)throw DWORD(ERROR_PROC_NOT_FOUND)
+ LOAD(createAdapter,"WintunCreateAdapter");LOAD(closeAdapter,"WintunCloseAdapter");LOAD(getLuid,"WintunGetAdapterLUID");LOAD(startSession,"WintunStartSession");LOAD(endSession,"WintunEndSession");LOAD(receivePacket,"WintunReceivePacket");LOAD(releasePacket,"WintunReleaseReceivePacket");LOAD(allocatePacket,"WintunAllocateSendPacket");LOAD(sendPacket,"WintunSendPacket");LOAD(readEvent,"WintunGetReadWaitEvent");
+#undef LOAD
+}
+void setJournal(const wchar_t* name,DWORD type,const void* data,DWORD size){HKEY key;check(RegCreateKeyExW(HKEY_LOCAL_MACHINE,Journal,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr));LSTATUS e=RegSetValueExW(key,name,0,type,static_cast<const BYTE*>(data),size);if(e==ERROR_SUCCESS)e=RegFlushKey(key);RegCloseKey(key);check(e);}
+bool readJournal(const wchar_t* name,DWORD type,void* data,DWORD size){DWORD n=size;return RegGetValueW(HKEY_LOCAL_MACHINE,Journal,name,type,nullptr,data,&n)==ERROR_SUCCESS&&n==size;}
+void checkpoint(){
+ DWORD pid=GetCurrentProcessId();FILETIME created,exited,kernel,user;check(GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)?0:GetLastError());setJournal(L"HelperPID",REG_DWORD,&pid,4);setJournal(L"Created",REG_BINARY,&created,sizeof(created));setJournal(L"Luid",REG_BINARY,&luid,sizeof(luid));setJournal(L"AdapterGUID",REG_BINARY,&adapterGuid,sizeof(adapterGuid));DWORD owned=ownEndpoint;setJournal(L"OwnEndpoint",REG_DWORD,&owned,4);if(ownEndpoint)setJournal(L"EndpointRoute",REG_BINARY,&endpointRoute,sizeof(endpointRoute));
+}
+FWPM_FILTER_CONDITION0 flags(){FWPM_FILTER_CONDITION0 c{};c.fieldKey=FWPM_CONDITION_FLAGS;c.matchType=FWP_MATCH_FLAGS_ALL_SET;c.conditionValue.type=FWP_UINT32;c.conditionValue.uint32=FWP_CONDITION_FLAG_IS_LOOPBACK;return c;}
+void addFilter(int id,const GUID& layer,FWP_ACTION_TYPE action,UINT64 weight,FWPM_FILTER_CONDITION0* conditions=nullptr,DWORD count=0){
+ FWPM_FILTER0 f{};f.filterKey=filterKey(id);f.displayData.name=const_cast<wchar_t*>(L"CONNECT CORE — fail-closed IPv4 VPN");f.flags=FWPM_FILTER_FLAG_PERSISTENT;f.layerKey=layer;f.subLayerKey=Sublayer;f.weight.type=FWP_UINT64;f.weight.uint64=&weight;f.action.type=action;f.filterCondition=conditions;f.numFilterConditions=count;check(FwpmFilterAdd0(engine,&f,nullptr,nullptr));
+}
+void installGuard(const Plan& p){
+ FWPM_SUBLAYER0* existing=nullptr;DWORD e=FwpmSubLayerGetByKey0(engine,&Sublayer,&existing);if(e==ERROR_SUCCESS){FwpmFreeMemory0(reinterpret_cast<void**>(&existing));throw DWORD(ERROR_ALREADY_EXISTS);}if(e!=FWP_E_SUBLAYER_NOT_FOUND)throw e;
+ check(FwpmTransactionBegin0(engine,0));try{
+  FWPM_SUBLAYER0 sub{};sub.subLayerKey=Sublayer;sub.displayData.name=const_cast<wchar_t*>(L"CONNECT CORE network protection");sub.flags=FWPM_SUBLAYER_FLAG_PERSISTENT;sub.weight=65535;check(FwpmSubLayerAdd0(engine,&sub,nullptr));
+  auto local=flags();addFilter(0,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(1,FWPM_LAYER_OUTBOUND_TRANSPORT_V6,FWP_ACTION_PERMIT,100,&local,1);
+  FWPM_FILTER_CONDITION0 tun{};tun.fieldKey=FWPM_CONDITION_IP_LOCAL_INTERFACE;tun.matchType=FWP_MATCH_EQUAL;tun.conditionValue.type=FWP_UINT64;tun.conditionValue.uint64=&luid.Value;addFilter(2,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,80,&tun,1);
+  FWPM_FILTER_CONDITION0 remote[3]{};remote[0].fieldKey=FWPM_CONDITION_IP_REMOTE_ADDRESS;remote[0].matchType=FWP_MATCH_EQUAL;remote[0].conditionValue.type=FWP_UINT32;remote[0].conditionValue.uint32=ntohl(p.endpoint);remote[1].fieldKey=FWPM_CONDITION_IP_PROTOCOL;remote[1].matchType=FWP_MATCH_EQUAL;remote[1].conditionValue.type=FWP_UINT8;remote[1].conditionValue.uint8=IPPROTO_UDP;remote[2].fieldKey=FWPM_CONDITION_IP_REMOTE_PORT;remote[2].matchType=FWP_MATCH_EQUAL;remote[2].conditionValue.type=FWP_UINT16;remote[2].conditionValue.uint16=p.port;addFilter(3,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,70,remote,3);
+  addFilter(4,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_BLOCK,1);addFilter(5,FWPM_LAYER_OUTBOUND_TRANSPORT_V6,FWP_ACTION_BLOCK,1);
+  addFilter(6,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(7,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_PERMIT,100,&local,1);addFilter(8,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,80,&tun,1);
+  FWP_BYTE_BLOB* app=nullptr;auto core=adjacent(L"connect-desktop-core.exe");check(FwpmGetAppIdFromFileName0(core.c_str(),&app));FWPM_FILTER_CONDITION0 endpointOnly[4]{};memcpy(endpointOnly,remote,sizeof(remote));endpointOnly[3].fieldKey=FWPM_CONDITION_ALE_APP_ID;endpointOnly[3].matchType=FWP_MATCH_EQUAL;endpointOnly[3].conditionValue.type=FWP_BYTE_BLOB_TYPE;endpointOnly[3].conditionValue.byteBlob=app;try{addFilter(9,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,70,endpointOnly,4);}catch(...){FwpmFreeMemory0(reinterpret_cast<void**>(&app));throw;}FwpmFreeMemory0(reinterpret_cast<void**>(&app));addFilter(10,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_BLOCK,1);addFilter(11,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_BLOCK,1);
+  check(FwpmTransactionCommit0(engine));guard=true;
+ }catch(...){FwpmTransactionAbort0(engine);throw;}
+}
+void removeGuard(){check(FwpmTransactionBegin0(engine,0));try{for(int i=0;i<12;++i){auto key=filterKey(i);DWORD e=FwpmFilterDeleteByKey0(engine,&key);if(e!=ERROR_SUCCESS&&e!=FWP_E_FILTER_NOT_FOUND)throw e;}DWORD e=FwpmSubLayerDeleteByKey0(engine,&Sublayer);if(e!=ERROR_SUCCESS&&e!=FWP_E_SUBLAYER_NOT_FOUND)throw e;check(FwpmTransactionCommit0(engine));guard=false;}catch(...){FwpmTransactionAbort0(engine);throw;}}
+SOCKADDR_INET ipv4(uint32_t ip){SOCKADDR_INET a{};a.Ipv4.sin_family=AF_INET;a.Ipv4.sin_addr.S_un.S_addr=ip;return a;}
+void prepareEndpoint(const Plan& p){
+ if(loopback(p.endpoint))return;auto dest=ipv4(p.endpoint);SOCKADDR_INET source{};MIB_IPFORWARD_ROW2 best{};check(GetBestRoute2(nullptr,0,nullptr,&dest,0,&best,&source));endpointRoute=best;endpointRoute.DestinationPrefix.Prefix=dest;endpointRoute.DestinationPrefix.PrefixLength=32;endpointRoute.Protocol=MIB_IPPROTO_NETMGMT;endpointRoute.ValidLifetime=INFINITE;endpointRoute.PreferredLifetime=INFINITE;endpointRoute.Age=0;endpointRoute.Immortal=TRUE;
+ // Journal intent first: a crash between API completion and a later flush must
+ // still know the exact owned route. Refuse an existing endpoint host route.
+ MIB_IPFORWARD_ROW2 existing=endpointRoute;if(GetIpForwardEntry2(&existing)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);ownEndpoint=true;checkpoint();check(CreateIpForwardEntry2(&endpointRoute));
+}
+void configure(const Plan& p){
+ MIB_IPINTERFACE_ROW row{};InitializeIpInterfaceEntry(&row);row.Family=AF_INET;row.InterfaceLuid=luid;check(GetIpInterfaceEntry(&row));row.NlMtu=Mtu;row.UseAutomaticMetric=FALSE;row.Metric=0;row.DadTransmits=0;row.RouterDiscoveryBehavior=RouterDiscoveryDisabled;check(SetIpInterfaceEntry(&row));
+ MIB_UNICASTIPADDRESS_ROW address{};InitializeUnicastIpAddressEntry(&address);address.InterfaceLuid=luid;address.Address=ipv4(p.device);address.OnLinkPrefixLength=32;address.PrefixOrigin=IpPrefixOriginManual;address.SuffixOrigin=IpSuffixOriginManual;address.ValidLifetime=INFINITE;address.PreferredLifetime=INFINITE;address.DadState=IpDadStatePreferred;check(CreateUnicastIpAddressEntry(&address));
+ for(int i=0;i<100;++i){auto current=address;if(GetUnicastIpAddressEntry(&current)==ERROR_SUCCESS&&current.DadState==IpDadStatePreferred)break;if(i==99)throw DWORD(ERROR_TIMEOUT);Sleep(50);}
+ wchar_t dns[32];InetNtopW(AF_INET,const_cast<uint32_t*>(&p.dns),dns,32);DNS_INTERFACE_SETTINGS settings{};settings.Version=DNS_INTERFACE_SETTINGS_VERSION1;settings.Flags=DNS_SETTING_NAMESERVER|DNS_SETTING_REGISTRATION_ENABLED|DNS_SETTINGS_ENABLE_LLMNR;settings.NameServer=dns;settings.RegistrationEnabled=FALSE;settings.EnableLLMNR=FALSE;check(SetInterfaceDnsSettings(adapterGuid,&settings));
+ for(int half=0;half<2;++half){MIB_IPFORWARD_ROW2 route{};InitializeIpForwardEntry(&route);route.InterfaceLuid=luid;route.DestinationPrefix.Prefix=ipv4(half?htonl(0x80000000):0);route.DestinationPrefix.PrefixLength=1;route.NextHop=ipv4(0);route.Metric=0;route.Protocol=MIB_IPPROTO_NETMGMT;route.ValidLifetime=INFINITE;route.PreferredLifetime=INFINITE;check(CreateIpForwardEntry2(&route));}
+}
+void closeTun(){if(session){endSession(session);session=nullptr;}if(adapter){closeAdapter(adapter);adapter=nullptr;}}
+void cleanup(){
+ // No existing adapter is changed. Closing the owned Wintun deletes its routes,
+ // IP and DNS. Validate a persisted endpoint route before removing it.
+ closeTun();if(ownEndpoint){auto current=endpointRoute;DWORD e=GetIpForwardEntry2(&current);if(e==ERROR_SUCCESS){if(current.InterfaceLuid.Value!=endpointRoute.InterfaceLuid.Value||memcmp(&current.NextHop,&endpointRoute.NextHop,sizeof(current.NextHop))||current.Metric!=endpointRoute.Metric)throw DWORD(ERROR_INVALID_DATA);check(DeleteIpForwardEntry2(&endpointRoute));}else if(e!=ERROR_NOT_FOUND)throw e;ownEndpoint=false;}
+ removeGuard();DWORD removed=RegDeleteTreeW(HKEY_LOCAL_MACHINE,Journal);if(removed!=ERROR_FILE_NOT_FOUND)check(removed);
+}
+void recover(){
+ DWORD pid=0;FILETIME stored{};if(readJournal(L"HelperPID",RRF_RT_REG_DWORD,&pid,4)&&readJournal(L"Created",RRF_RT_REG_BINARY,&stored,sizeof(stored))){HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(p){FILETIME c,e,k,u;if(GetProcessTimes(p,&c,&e,&k,&u)&&memcmp(&c,&stored,sizeof(c))==0&&WaitForSingleObject(p,0)==WAIT_TIMEOUT){CloseHandle(p);throw DWORD(ERROR_BUSY);}CloseHandle(p);}}
+ DWORD owned=0;if(readJournal(L"OwnEndpoint",RRF_RT_REG_DWORD,&owned,4)&&owned){if(!readJournal(L"EndpointRoute",RRF_RT_REG_BINARY,&endpointRoute,sizeof(endpointRoute))||endpointRoute.DestinationPrefix.Prefix.si_family!=AF_INET||endpointRoute.DestinationPrefix.PrefixLength!=32||!endpointRoute.InterfaceLuid.Value)throw DWORD(ERROR_INVALID_DATA);ownEndpoint=true;}
+ NET_LUID old{};GUID expected{},current{};if(readJournal(L"Luid",RRF_RT_REG_BINARY,&old,sizeof(old))&&readJournal(L"AdapterGUID",RRF_RT_REG_BINARY,&expected,sizeof(expected))){DWORD e=ConvertInterfaceLuidToGuid(&old,&current);if(e==ERROR_SUCCESS){if(memcmp(&expected,&current,sizeof(current)))throw DWORD(ERROR_INVALID_DATA);throw DWORD(ERROR_BUSY);}if(e!=ERROR_FILE_NOT_FOUND&&e!=ERROR_NOT_FOUND)throw e;}
+ cleanup();
+}
+void sendPackets(){HANDLE waits[]={readEvent(session),worker};while(!stopping){DWORD size=0;BYTE* p=receivePacket(session,&size);if(p){bool ok=size<=Mtu&&frame(FromTun,p,size);releasePacket(session,p);if(!ok)break;continue;}if(GetLastError()!=ERROR_NO_MORE_ITEMS)break;DWORD event=WaitForMultipleObjects(2,waits,FALSE,250);if(event==WAIT_OBJECT_0+1)break;}if(!stopping.exchange(true)){status(4,5);if(controlThread)CancelSynchronousIo(controlThread);}}
+void checkSponsor(DWORD pid,const std::wstring& name){
+ const std::wstring prefix=L"\\\\.\\pipe\\ConnectCore-";if(!pid||name.size()!=prefix.size()+64||name.rfind(prefix,0)!=0)throw DWORD(ERROR_INVALID_PARAMETER);for(size_t i=prefix.size();i<name.size();++i)if(!((name[i]>=L'0'&&name[i]<=L'9')||(name[i]>=L'a'&&name[i]<=L'f')))throw DWORD(ERROR_INVALID_PARAMETER);
+ worker=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(!worker)throw GetLastError();wchar_t path[32768];DWORD n=32768;check(QueryFullProcessImageNameW(worker,0,path,&n)?0:GetLastError());if(_wcsicmp(std::wstring(path,n).c_str(),adjacent(L"connect-desktop-core.exe").c_str()))throw DWORD(ERROR_ACCESS_DENIED);
+ for(int i=0;i<200;++i){pipe=CreateFileW(name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);if(pipe!=INVALID_HANDLE_VALUE)break;if(GetLastError()!=ERROR_PIPE_BUSY&&GetLastError()!=ERROR_FILE_NOT_FOUND)throw GetLastError();if(WaitForSingleObject(worker,50)!=WAIT_TIMEOUT)throw DWORD(ERROR_PROCESS_ABORTED);}
+ if(pipe==INVALID_HANDLE_VALUE)throw DWORD(ERROR_TIMEOUT);ULONG actual=0;check(GetNamedPipeServerProcessId(pipe,&actual)?0:GetLastError());if(actual!=pid)throw DWORD(ERROR_ACCESS_DENIED);
+}
+}
+int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
+ if(!IsUserAnAdmin())return ERROR_ELEVATION_REQUIRED;WSADATA ws;WSAStartup(MAKEWORD(2,2),&ws);int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);std::thread sender;bool explicitStop=false;DWORD error=0;
+ HANDLE exclusivity=nullptr;
+ try{
+  bool standaloneRecovery=argc==2&&std::wstring(argv[1])==L"--recover";
+  if(!standaloneRecovery){if(argc!=3)throw DWORD(ERROR_INVALID_PARAMETER);wchar_t* end=nullptr;unsigned long pid=wcstoul(argv[2],&end,10);if(!end||*end||pid>MAXDWORD)throw DWORD(ERROR_INVALID_PARAMETER);checkSponsor(static_cast<DWORD>(pid),argv[1]);}
+  exclusivity=CreateMutexW(nullptr,FALSE,L"Global\\ConnectCoreNetworkHelper");if(!exclusivity)throw GetLastError();DWORD acquired=WaitForSingleObject(exclusivity,0);if(acquired!=WAIT_OBJECT_0&&acquired!=WAIT_ABANDONED)throw DWORD(ERROR_BUSY);
+  check(FwpmEngineOpen0(nullptr,RPC_C_AUTHN_WINNT,nullptr,nullptr,&engine));
+  if(standaloneRecovery){recover();if(argv)LocalFree(argv);FwpmEngineClose0(engine);ReleaseMutex(exclusivity);CloseHandle(exclusivity);return 0;}
+  BYTE h[8];if(!readExact(h,8)||h[0]!='C'||h[1]!='C'||h[2]!=2)throw DWORD(ERROR_INVALID_DATA);DWORD length;memcpy(&length,h+4,4);if(h[3]==8&&length==0){recover();status(1);if(argv)LocalFree(argv);CloseHandle(pipe);CloseHandle(worker);FwpmEngineClose0(engine);ReleaseMutex(exclusivity);CloseHandle(exclusivity);return 0;}if(h[3]!=Configure)throw DWORD(ERROR_INVALID_DATA);
+  FWPM_SUBLAYER0* existing=nullptr;DWORD present=FwpmSubLayerGetByKey0(engine,&Sublayer,&existing);if(present==ERROR_SUCCESS){FwpmFreeMemory0(reinterpret_cast<void**>(&existing));throw DWORD(ERROR_ALREADY_EXISTS);}if(present!=FWP_E_SUBLAYER_NOT_FOUND)throw present;
+  Plan p{};if(length!=sizeof(p)||!readExact(&p,sizeof(p)))throw DWORD(ERROR_INVALID_DATA);validate(p);trustedDLL();
+  wchar_t* end=nullptr;DWORD pid=wcstoul(argv[2],&end,10);std::wstring name=L"ccvpn-"+std::to_wstring(pid);NET_LUID old{};if(ConvertInterfaceAliasToLuid(name.c_str(),&old)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);check(CoCreateGuid(&adapterGuid));adapter=createAdapter(name.c_str(),L"CONNECT CORE",&adapterGuid);if(!adapter)throw GetLastError();getLuid(adapter,&luid);check(ConvertInterfaceLuidToGuid(&luid,&adapterGuid));session=startSession(adapter,0x400000);if(!session)throw GetLastError();checkpoint();prepareEndpoint(p);installGuard(p);configure(p);status(3);controlThread=OpenThread(THREAD_TERMINATE,FALSE,GetCurrentThreadId());if(!controlThread)throw GetLastError();sender=std::thread(sendPackets);
+  while(!stopping){if(!readExact(h,8))break;if(h[0]!='C'||h[1]!='C'||h[2]!=2)break;memcpy(&length,h+4,4);if(h[3]==Exit&&length==0){explicitStop=true;break;}if(h[3]!=ToTun||length<20||length>Mtu)break;BYTE bytes[Mtu];if(!readExact(bytes,length))break;BYTE* packet=allocatePacket(session,length);if(!packet)throw GetLastError();memcpy(packet,bytes,length);sendPacket(session,packet);}
+  stopping=true;if(sender.joinable())sender.join();if(explicitStop){cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
+ }catch(DWORD e){error=e;stopping=true;if(sender.joinable())sender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
+ closeTun();if(controlThread)CloseHandle(controlThread);if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
+}

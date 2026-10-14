@@ -24,6 +24,9 @@ type Enrollment struct {
 func (m *Manager) Enroll(e Enrollment) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.enrollLocked(e)
+}
+func (m *Manager) enrollLocked(e Enrollment) (string, error) {
 	if len(e.Name) < 1 || len(e.Name) > 80 {
 		return "", errors.New("invalid device name")
 	}
@@ -77,6 +80,9 @@ func (m *Manager) Enroll(e Enrollment) (string, error) {
 func (m *Manager) Export(id string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.exportLocked(id)
+}
+func (m *Manager) exportLocked(id string) ([]byte, error) {
 	d, ok := m.state.Devices[id]
 	if !ok || d.Access != "enabled" {
 		return nil, errors.New("enabled device required")

@@ -17,6 +17,13 @@ import (
 )
 
 func Generate(dir string) (core.Config, core.Config, error) {
+	return generate(dir, false)
+}
+
+// GenerateIssuance is explicitly for a NEW disposable auto-enrollment lab.
+// Ordinary Generate still discards the CA signing key.
+func GenerateIssuance(dir string) (core.Config, core.Config, error) { return generate(dir, true) }
+func generate(dir string, keepIssuer bool) (core.Config, core.Config, error) {
 	var server, client core.Config
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return server, client, err
@@ -34,6 +41,15 @@ func Generate(dir string) (core.Config, core.Config, error) {
 	caPath := filepath.Join(dir, "ca.pem")
 	if err = os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
 		return server, client, err
+	}
+	if keepIssuer {
+		raw, e := x509.MarshalPKCS8PrivateKey(key)
+		if e != nil {
+			return server, client, e
+		}
+		if e = os.WriteFile(filepath.Join(dir, "issuer.key"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}), 0600); e != nil {
+			return server, client, e
+		}
 	}
 	root, err = x509.ParseCertificate(der)
 	if err != nil {
