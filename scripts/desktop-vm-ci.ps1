@@ -39,6 +39,24 @@ public sealed class CorePipe {
 '@
 function StartGuest([string]$exe,[string[]]$arguments){$i=[Diagnostics.ProcessStartInfo]::new($exe);$i.UseShellExecute=$false;$i.CreateNoWindow=$true;$i.RedirectStandardError=$true;foreach($a in $arguments){$i.ArgumentList.Add($a)};return [Diagnostics.Process]::Start($i)}
 function AwaitGuest([string]$pattern,[int]$seconds=90){$deadline=[DateTime]::UtcNow.AddSeconds($seconds);while([DateTime]::UtcNow -lt $deadline){if($script:lineTask.IsCompleted){$line=$script:lineTask.GetAwaiter().GetResult();if($null -eq $line){throw 'Guest serial ended'};$script:guestLines.Add($line);$script:lineTask=$script:guestReader.ReadLineAsync();if($line -match $pattern){return};continue};Start-Sleep -Milliseconds 20};throw "Guest deadline: $pattern"}
+# CI-only forensics cleanup: removing these own filters cannot make a failed
+# recovery pass. No product client or privileged helper exposes this operation.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class FailedCIGuard {
+ [DllImport("fwpuclnt.dll",CharSet=CharSet.Unicode)] static extern uint FwpmEngineOpen0(string server,uint auth,IntPtr identity,IntPtr session,out IntPtr engine);
+ [DllImport("fwpuclnt.dll")] static extern uint FwpmEngineClose0(IntPtr engine);
+ [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDeleteByKey0(IntPtr engine,ref Guid key);
+ [DllImport("fwpuclnt.dll")] static extern uint FwpmSubLayerDeleteByKey0(IntPtr engine,ref Guid key);
+ public static void RemoveOwnDenyForEvidence(){IntPtr e;if(FwpmEngineOpen0(null,10,IntPtr.Zero,IntPtr.Zero,out e)!=0)throw new Exception("CI forensic engine failed");try{for(int i=0;i<18;i++){byte[] b=new Guid("304497e9-426e-4f42-8a25-3a88525e71c0").ToByteArray();b[15]=(byte)(0xc1+i);Guid key=new Guid(b);uint code=FwpmFilterDeleteByKey0(e,ref key);if(code!=0&&code!=0x80320003)throw new Exception("CI own filter cleanup failed "+code);}Guid sub=new Guid("304497e9-426e-4f42-8a25-3a88525e71c0");uint removed=FwpmSubLayerDeleteByKey0(e,ref sub);if(removed!=0&&removed!=0x80320007)throw new Exception("CI own sublayer cleanup failed "+removed);}finally{FwpmEngineClose0(e);}}
+}
+'@
+function RecoverWithDeadline {
+ $recovery=Start-Process (Join-Path $dist 'ConnectCoreNetwork.exe') -ArgumentList '--recover' -WindowStyle Hidden -PassThru
+ if(!$recovery.WaitForExit(15000)){$recovery.Kill();$recovery.WaitForExit();return $false}
+ return $recovery.ExitCode -eq 0
+}
 function ReceiveCapture([string]$path){
  $offset=$guestLines.Count;$guestWriter.WriteLine('capture');AwaitGuest '^LAB_PCAP_END$' 180
  $lines=$guestLines.GetRange($offset,$guestLines.Count-$offset)
@@ -94,8 +112,7 @@ try{
  # Kill only this worker; persistent WFP must cover the removed TUN as well.
  $client.Process.Kill();$client.Process.WaitForExit();Start-Sleep -Seconds 2
  python "$PSScriptRoot/vm-negative-probes.py" | Set-Content (Join-Path $out 'crash-probes.json');if($LASTEXITCODE){throw 'Worker crash exposed direct network'}
- $recovery=Start-Process (Join-Path $dist 'ConnectCoreNetwork.exe') -ArgumentList '--recover' -WindowStyle Hidden -PassThru -Wait
- if($recovery.ExitCode){throw 'Explicit privileged recovery failed'}
+ if(!(RecoverWithDeadline)){throw 'Explicit privileged recovery failed'}
  Write-Output 'TRANSPORT_AND_WORKER_CRASH_FAIL_CLOSED_AND_RECOVERY_PASSED'
  $guestWriter.WriteLine('start-server');AwaitGuest '^LAB_SERVER_READY$'
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
@@ -129,8 +146,13 @@ try{
  if($client -and !$client.Process.HasExited){try{$client.Send(5)}catch{};if(!$client.Process.WaitForExit(10000)){$client.Process.Kill();$client.Process.WaitForExit()}}
  if($client){$client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'network-helper.log')}
  Start-Sleep -Milliseconds 600
- $recovery=Start-Process (Join-Path $dist 'ConnectCoreNetwork.exe') -ArgumentList '--recover' -WindowStyle Hidden -PassThru -Wait
- if($recovery.ExitCode){Write-Warning "Recovery exit $($recovery.ExitCode); disposable runner retains protection"}
+ if(!(RecoverWithDeadline)){
+  $passed=$false
+  Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq (Join-Path $dist 'ConnectCoreNetwork.exe')} | ForEach-Object {Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}
+  Start-Sleep -Seconds 1
+  [FailedCIGuard]::RemoveOwnDenyForEvidence()
+  'CI_ONLY_FORENSIC_GUARD_REMOVAL_NETWORK_TEST_FAILED' | Set-Content (Join-Path $out 'recovery-failed.log')
+ }
  if($capture){pktmon stop | Out-Null;pktmon etl2pcap (Join-Path $out 'physical.etl') --out (Join-Path $out 'physical.pcapng') | Out-Null}
  if($vm -and !$vm.HasExited){$vm.Kill();$vm.WaitForExit()}
  $guestLines | Set-Content (Join-Path $out 'linux-console.log')
@@ -138,6 +160,7 @@ try{
  if($serial){$serial.Dispose()};if($listener){$listener.Stop()}
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json | Set-Content (Join-Path $out 'after-adapters.json')
 }
+if(!$passed){throw 'System VPN validation did not complete; no artifact may be promoted'}
 if($passed){
  python "$PSScriptRoot/verify-desktop-physical.py" (Join-Path $out 'physical.pcapng') | Set-Content (Join-Path $out 'physical-capture-verification.json')
  if($LASTEXITCODE){throw 'Physical NIC contained plaintext test payload / DNS'}
