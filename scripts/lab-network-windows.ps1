@@ -86,7 +86,9 @@ try {
         if($endpoint -eq '127.0.0.1'){$remote=@('0.0.0.0-10.232.0.0','10.232.0.2-127.0.0.0','127.0.0.2-255.255.255.255')}
         else{$remote=@('0.0.0.0-10.232.0.0','10.232.0.2-192.168.231.0','192.168.231.2-255.255.255.255')}
         Add-Guard 'ipv4' @{RemoteAddress=$remote}
-        Add-Guard 'ipv6' @{RemoteAddress='::/0'}
+        # NetSecurity rejects the zero-length IPv6 prefix on this Windows image.
+        # Two /1 prefixes cover the same complete 128-bit address space.
+        Add-Guard 'ipv6' @{RemoteAddress=@('::/1','8000::/1')}
         Add-Guard 'endpoint-tcp' @{RemoteAddress=$endpoint;Protocol='TCP'}
         $ports=@();if($port -gt 1){$ports+=('1-'+($port-1))};if($port -lt 65535){$ports+=(($port+1).ToString()+'-65535')}
         Add-Guard 'endpoint-other-udp' @{RemoteAddress=$endpoint;Protocol='UDP';RemotePort=$ports}

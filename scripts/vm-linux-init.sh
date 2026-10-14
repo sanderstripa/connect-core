@@ -3,6 +3,10 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
+# Bind control to the actual UART after devtmpfs replaces the exported /dev.
+# PID1's inherited console input is not a reliable bidirectional control channel.
+exec </dev/ttyS0 >/dev/ttyS0 2>&1
+stty -echo -icanon min 1 time 0
 mkdir -p /run /artifacts /dev/net
 grep -q 'connect_lab_vm=1' /proc/cmdline || { echo 'LAB_REFUSED'; exec poweroff -f; }
 modprobe virtio_pci || true
