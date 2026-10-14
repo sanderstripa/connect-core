@@ -24,7 +24,7 @@ constexpr uint8_t Configure=32,FromTun=33,ToTun=34,Exit=5,Status=128;
 constexpr DWORD Mtu=1100;
 const GUID Sublayer={0x304497e9,0x426e,0x4f42,{0x8a,0x25,0x3a,0x88,0x52,0x5e,0x71,0xc0}};
 const wchar_t* Journal=L"SOFTWARE\\ConnectCoreLab\\NetworkJournal";
-HANDLE pipe=INVALID_HANDLE_VALUE,engine=nullptr,adapter=nullptr,session=nullptr,worker=nullptr;
+HANDLE pipe=INVALID_HANDLE_VALUE,engine=nullptr,permitEngine=nullptr,adapter=nullptr,session=nullptr,worker=nullptr;
 
 HMODULE wintun=nullptr;NET_LUID luid{};GUID adapterGuid{};MIB_IPFORWARD_ROW2 endpointRoute{};bool ownEndpoint=false,guard=false;
 std::mutex outputMutex;std::atomic<bool> stopping=false;
@@ -83,21 +83,39 @@ void checkpoint(){
 }
 FWPM_FILTER_CONDITION0 flags(){FWPM_FILTER_CONDITION0 c{};c.fieldKey=FWPM_CONDITION_FLAGS;c.matchType=FWP_MATCH_FLAGS_ALL_SET;c.conditionValue.type=FWP_UINT32;c.conditionValue.uint32=FWP_CONDITION_FLAG_IS_LOOPBACK;return c;}
 void addFilter(int id,const GUID& layer,FWP_ACTION_TYPE action,UINT64 weight,FWPM_FILTER_CONDITION0* conditions=nullptr,DWORD count=0){
- FWPM_FILTER0 f{};f.filterKey=filterKey(id);f.displayData.name=const_cast<wchar_t*>(L"CONNECT CORE — fail-closed IPv4 VPN");f.flags=FWPM_FILTER_FLAG_PERSISTENT;f.layerKey=layer;f.subLayerKey=Sublayer;f.weight.type=FWP_UINT64;f.weight.uint64=&weight;f.action.type=action;f.filterCondition=conditions;f.numFilterConditions=count;check(FwpmFilterAdd0(engine,&f,nullptr,nullptr));
+ FWPM_FILTER0 f{};f.filterKey=filterKey(id);f.displayData.name=const_cast<wchar_t*>(L"CONNECT CORE — fail-closed IPv4 VPN");bool temporary=action==FWP_ACTION_PERMIT&&weight<100;f.flags=temporary?0:FWPM_FILTER_FLAG_PERSISTENT;f.layerKey=layer;f.subLayerKey=Sublayer;f.weight.type=FWP_UINT64;f.weight.uint64=&weight;f.action.type=action;f.filterCondition=conditions;f.numFilterConditions=count;check(FwpmFilterAdd0(temporary?permitEngine:engine,&f,nullptr,nullptr));
 }
 void installGuard(const Plan& p){
  FWPM_SUBLAYER0* existing=nullptr;DWORD e=FwpmSubLayerGetByKey0(engine,&Sublayer,&existing);if(e==ERROR_SUCCESS){FwpmFreeMemory0(reinterpret_cast<void**>(&existing));throw DWORD(ERROR_ALREADY_EXISTS);}if(e!=FWP_E_SUBLAYER_NOT_FOUND)throw e;
+ auto local=flags();
  check(FwpmTransactionBegin0(engine,0));try{
   FWPM_SUBLAYER0 sub{};sub.subLayerKey=Sublayer;sub.displayData.name=const_cast<wchar_t*>(L"CONNECT CORE network protection");sub.flags=FWPM_SUBLAYER_FLAG_PERSISTENT;sub.weight=65535;check(FwpmSubLayerAdd0(engine,&sub,nullptr));
-  auto local=flags();
-  FWPM_FILTER_CONDITION0 tun{};tun.fieldKey=FWPM_CONDITION_IP_LOCAL_INTERFACE;tun.matchType=FWP_MATCH_EQUAL;tun.conditionValue.type=FWP_UINT64;tun.conditionValue.uint64=&luid.Value;FWPM_FILTER_CONDITION0 remote[3]{};remote[0].fieldKey=FWPM_CONDITION_IP_REMOTE_ADDRESS;remote[0].matchType=FWP_MATCH_EQUAL;remote[0].conditionValue.type=FWP_UINT32;remote[0].conditionValue.uint32=ntohl(p.endpoint);remote[1].fieldKey=FWPM_CONDITION_IP_PROTOCOL;remote[1].matchType=FWP_MATCH_EQUAL;remote[1].conditionValue.type=FWP_UINT8;remote[1].conditionValue.uint8=IPPROTO_UDP;remote[2].fieldKey=FWPM_CONDITION_IP_REMOTE_PORT;remote[2].matchType=FWP_MATCH_EQUAL;remote[2].conditionValue.type=FWP_UINT16;remote[2].conditionValue.uint16=p.port;
-  // ALE reauthorizes existing flows when policy changes; default deny remains persistent.
-  addFilter(6,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(7,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_PERMIT,100,&local,1);addFilter(8,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,80,&tun,1);
-  FWP_BYTE_BLOB* app=nullptr;auto core=adjacent(L"connect-desktop-core.exe");check(FwpmGetAppIdFromFileName0(core.c_str(),&app));FWPM_FILTER_CONDITION0 endpointOnly[4]{};memcpy(endpointOnly,remote,sizeof(remote));endpointOnly[3].fieldKey=FWPM_CONDITION_ALE_APP_ID;endpointOnly[3].matchType=FWP_MATCH_EQUAL;endpointOnly[3].conditionValue.type=FWP_BYTE_BLOB_TYPE;endpointOnly[3].conditionValue.byteBlob=app;try{addFilter(9,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,70,endpointOnly,4);addFilter(15,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,70,endpointOnly,4);}catch(...){FwpmFreeMemory0(reinterpret_cast<void**>(&app));throw;}FwpmFreeMemory0(reinterpret_cast<void**>(&app));addFilter(10,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_BLOCK,1);addFilter(11,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_BLOCK,1);addFilter(12,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(13,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,FWP_ACTION_PERMIT,100,&local,1);addFilter(14,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,80,&tun,1);addFilter(16,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_BLOCK,1);addFilter(17,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,FWP_ACTION_BLOCK,1);
+  addFilter(0,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(1,FWPM_LAYER_OUTBOUND_TRANSPORT_V6,FWP_ACTION_PERMIT,100,&local,1);
+  addFilter(4,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_BLOCK,1);addFilter(5,FWPM_LAYER_OUTBOUND_TRANSPORT_V6,FWP_ACTION_BLOCK,1);
+  addFilter(6,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(7,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_PERMIT,100,&local,1);
+  addFilter(10,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_BLOCK,1);addFilter(11,FWPM_LAYER_ALE_AUTH_CONNECT_V6,FWP_ACTION_BLOCK,1);
+  addFilter(12,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,100,&local,1);addFilter(13,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,FWP_ACTION_PERMIT,100,&local,1);
+  addFilter(16,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_BLOCK,1);addFilter(17,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,FWP_ACTION_BLOCK,1);
   check(FwpmTransactionCommit0(engine));guard=true;
  }catch(...){FwpmTransactionAbort0(engine);throw;}
+ // Only default-deny and loopback rules persist. Tunnel/endpoint permits are
+ // owned by this helper's dynamic session, so a crash cannot leave a stale LUID
+ // permit that accidentally matches a subsequently created network adapter.
+ FWPM_SESSION0 sessionPolicy{};sessionPolicy.flags=FWPM_SESSION_FLAG_DYNAMIC;check(FwpmEngineOpen0(nullptr,RPC_C_AUTHN_WINNT,nullptr,&sessionPolicy,&permitEngine));
+ FWPM_FILTER_CONDITION0 tun{};tun.fieldKey=FWPM_CONDITION_IP_LOCAL_INTERFACE;tun.matchType=FWP_MATCH_EQUAL;tun.conditionValue.type=FWP_UINT64;tun.conditionValue.uint64=&luid.Value;
+ FWPM_FILTER_CONDITION0 remote[3]{};remote[0].fieldKey=FWPM_CONDITION_IP_REMOTE_ADDRESS;remote[0].matchType=FWP_MATCH_EQUAL;remote[0].conditionValue.type=FWP_UINT32;remote[0].conditionValue.uint32=ntohl(p.endpoint);remote[1].fieldKey=FWPM_CONDITION_IP_PROTOCOL;remote[1].matchType=FWP_MATCH_EQUAL;remote[1].conditionValue.type=FWP_UINT8;remote[1].conditionValue.uint8=IPPROTO_UDP;remote[2].fieldKey=FWPM_CONDITION_IP_REMOTE_PORT;remote[2].matchType=FWP_MATCH_EQUAL;remote[2].conditionValue.type=FWP_UINT16;remote[2].conditionValue.uint16=p.port;
+ FWP_BYTE_BLOB* app=nullptr;auto core=adjacent(L"connect-desktop-core.exe");check(FwpmGetAppIdFromFileName0(core.c_str(),&app));
+ check(FwpmTransactionBegin0(permitEngine,0));try{
+  addFilter(2,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,80,&tun,1);addFilter(3,FWPM_LAYER_OUTBOUND_TRANSPORT_V4,FWP_ACTION_PERMIT,70,remote,3);
+  addFilter(8,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,80,&tun,1);addFilter(14,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,80,&tun,1);
+  FWPM_FILTER_CONDITION0 endpointOnly[4]{};memcpy(endpointOnly,remote,sizeof(remote));endpointOnly[3].fieldKey=FWPM_CONDITION_ALE_APP_ID;endpointOnly[3].matchType=FWP_MATCH_EQUAL;endpointOnly[3].conditionValue.type=FWP_BYTE_BLOB_TYPE;endpointOnly[3].conditionValue.byteBlob=app;
+  addFilter(9,FWPM_LAYER_ALE_AUTH_CONNECT_V4,FWP_ACTION_PERMIT,70,endpointOnly,4);addFilter(15,FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,FWP_ACTION_PERMIT,70,endpointOnly,4);
+  check(FwpmTransactionCommit0(permitEngine));
+ }catch(...){FwpmTransactionAbort0(permitEngine);FwpmFreeMemory0(reinterpret_cast<void**>(&app));throw;}
+ FwpmFreeMemory0(reinterpret_cast<void**>(&app));
 }
-void removeGuard(){check(FwpmTransactionBegin0(engine,0));try{for(int i=0;i<18;++i){auto key=filterKey(i);DWORD e=FwpmFilterDeleteByKey0(engine,&key);if(e!=ERROR_SUCCESS&&e!=FWP_E_FILTER_NOT_FOUND)throw e;}DWORD e=FwpmSubLayerDeleteByKey0(engine,&Sublayer);if(e!=ERROR_SUCCESS&&e!=FWP_E_SUBLAYER_NOT_FOUND)throw e;check(FwpmTransactionCommit0(engine));guard=false;}catch(...){FwpmTransactionAbort0(engine);throw;}}
+void closePermits(){if(permitEngine){HANDLE owned=permitEngine;permitEngine=nullptr;check(FwpmEngineClose0(owned));}}
+void removeGuard(){closePermits();check(FwpmTransactionBegin0(engine,0));try{for(int i=0;i<18;++i){auto key=filterKey(i);DWORD e=FwpmFilterDeleteByKey0(engine,&key);if(e!=ERROR_SUCCESS&&e!=FWP_E_FILTER_NOT_FOUND)throw e;}DWORD e=FwpmSubLayerDeleteByKey0(engine,&Sublayer);if(e!=ERROR_SUCCESS&&e!=FWP_E_SUBLAYER_NOT_FOUND)throw e;check(FwpmTransactionCommit0(engine));guard=false;}catch(...){FwpmTransactionAbort0(engine);throw;}}
 SOCKADDR_INET ipv4(uint32_t ip){SOCKADDR_INET a{};a.Ipv4.sin_family=AF_INET;a.Ipv4.sin_addr.S_un.S_addr=ip;return a;}
 void prepareEndpoint(const Plan& p){
  if(loopback(p.endpoint))return;auto dest=ipv4(p.endpoint);SOCKADDR_INET source{};MIB_IPFORWARD_ROW2 best{};check(GetBestRoute2(nullptr,0,nullptr,&dest,0,&best,&source));endpointRoute=best;endpointRoute.DestinationPrefix.Prefix=dest;endpointRoute.DestinationPrefix.PrefixLength=32;endpointRoute.Protocol=MIB_IPPROTO_NETMGMT;endpointRoute.ValidLifetime=INFINITE;endpointRoute.PreferredLifetime=INFINITE;endpointRoute.Age=0;endpointRoute.Immortal=TRUE;
@@ -151,5 +169,5 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
   while(!stopping){if(!readExact(h,8))break;if(h[0]!='C'||h[1]!='C'||h[2]!=2)break;memcpy(&length,h+4,4);if(h[3]==Exit&&length==0){explicitStop=true;break;}if(h[3]!=ToTun||length<20||length>Mtu)break;BYTE bytes[Mtu];if(!readExact(bytes,length))break;BYTE* packet=allocatePacket(session,length);if(!packet)throw GetLastError();memcpy(packet,bytes,length);sendPacket(session,packet);}
   stopping=true;if(sender.joinable())sender.join();if(explicitStop){uint64_t counters[3]={rawPackets.load(),rawBytes.load(),polls.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
  }catch(DWORD e){error=e;systemError=e;stopping=true;if(sender.joinable())sender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
- closeTun();if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
+ closeTun();if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(permitEngine)FwpmEngineClose0(permitEngine);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
 }
