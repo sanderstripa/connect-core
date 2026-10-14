@@ -49,6 +49,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/v1/status":
 			s := a.Manager.Snapshot()
 			s["onboarding_enabled"] = a.Broker != nil
+			caps := s["capabilities"].(map[string]bool)
+			caps["qr_import"] = a.Broker != nil
+			caps["link_import"] = a.Broker != nil
+			caps["managed_issuance"] = a.Broker != nil
 			JSON(w, 200, s)
 			return
 		case "/v1/registrations":

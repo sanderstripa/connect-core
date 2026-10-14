@@ -255,9 +255,12 @@ def update(args, m, revision, release):
     shutil.copytree(release, target)
     # Compatibility check is read-only: never restore a stale state backup that
     # could undo newer certificate revocations.
-    checked = run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json')).stdout.strip()
-    if checked != 'api_version=1 state_version=1 invitations_version=1':
-        shutil.rmtree(target); raise RuntimeError('Unrecognized persisted-state compatibility contract')
+    try:
+        checked = run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json')).stdout.strip()
+        if checked != 'api_version=1 state_version=1 invitations_version=1':
+            raise RuntimeError('Unrecognized persisted-state compatibility contract')
+    except BaseException:
+        shutil.rmtree(target); raise
     for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name)
     try:
         next_link = ROOT / 'current.next'; next_link.symlink_to(target); os.replace(next_link, ROOT / 'current')

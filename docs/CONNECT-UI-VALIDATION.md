@@ -1,5 +1,45 @@
 # CONNECT UI validation report
 
+## Version 0.2.0: VPS lifecycle and enrollment
+
+The [VPS installation guide](VPS-INSTALL.md) now describes a concrete reviewed
+one-command installer, dedicated systemd accounts/services, owned TUN/scoped
+forwarding/NAT, initial local panel authentication, immutable-source updates,
+binary rollback and complete removal of owned installation resources.
+
+Verified on a disposable systemd runner in
+[CI run 38542462077](https://github.com/sanderstripa/connect-core/actions/runs/38542462077)
+at source commit `87327644d6a0cd2e49089eae21ca25371b9b0d25`:
+
+- Occupied port rejected before installation; neighboring HTTP process preserved.
+- Actual Core/UI/network systemd services started; reported running only with a
+  real persistent TUN and UDP listener, with zero initial client sessions.
+- QR decoded back into the exact supported connect URI.
+- Actual client subprocess created the private key and CSR locally; operator
+  approved a fingerprint independently derived from the client proof.
+- Issued ClientAuth certificate/configuration authenticated real QUIC traffic:
+  TUN -> scoped forwarding/masquerade -> separate UDP namespace -> return packet.
+  The namespace receiver checked the actual translated source address; this
+  proves the NAT path, not a mock packet fixture or public Internet performance.
+- Broken new UI binary caused update health failure and restoration of the
+  previous release; real revocation state survived. Successful update and
+  explicit previous-version rollback also passed; revoked reconnect was denied.
+- Uninstall restored the original routes/firewall chain inventory, preserved
+  the neighbor service and did not change global `ip_forward`.
+- Browser checks passed for actual invite/QR/clipboard, separate real client
+  importer, fingerprint approval and exported config. No response interception.
+- Go Windows/Linux tests, HTTPS enrollment security cases, race checks, vet and
+  original TUN/lab gates are included in the PR workflows. Final head status is
+  available on [PR #3](https://github.com/sanderstripa/connect-core/pull/3).
+
+The previous statement that QR, managed certificate issuance and VPS installation
+were unavailable applies to the 0.1 baseline below, not to 0.2. Automatic mobile/
+Windows URL association and full-device Windows routing remain unavailable;
+`connect-core import-link` is the actual supported import consumer. No live VPS
+was accessed or deployed. Unknown future schema migrations are refused, not
+silently applied. See VPS-INSTALL for certificate lifetimes, provider firewall
+and cloud-NAT limits, and conditional rollback of the shared uplink flag.
+
 ## Local evidence, 2026-10-14
 
 - Go 1.27.0 Windows: `go test -count=1 ./...` passed, including existing TCP/IP tests.

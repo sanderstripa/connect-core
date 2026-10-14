@@ -112,6 +112,24 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()==before_global, 'global forwarding changed'
         assert sorted(json.dumps(v,sort_keys=True) for v in network.routes())==sorted(json.dumps(v,sort_keys=True) for v in before_routes), 'routes not rolled back'
         assert not installer.ROOT.exists() and not installer.CONFIG.exists() and not installer.STATE.exists()
+        # Deliberately fail after the network unit applied its own rules. The
+        # install transaction must remove only its mutations, not the neighbor.
+        original_run=installer.run
+        def fail_owned_start(*command, **kwargs):
+            if command==('systemctl','start','connect-core.service'):
+                raise RuntimeError('deliberate own-service startup failure')
+            return original_run(*command,**kwargs)
+        installer.run=fail_owned_start
+        try:
+            import argparse
+            ns=argparse.Namespace(endpoint='127.0.0.1:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=17890,control_port=17891,enrollment_port=17900,yes=True,password_file=str(secret))
+            try: installer.install(ns,'d'*40,release)
+            except RuntimeError: pass
+            else: raise AssertionError('deliberately failed install falsely succeeded')
+        finally: installer.run=original_run
+        assert not installer.ROOT.exists() and not installer.JOURNAL.exists(), 'failed install left owned resources'
+        assert neighbor.poll() is None and network.firewall()==before_firewall, 'failed install changed neighbor rules'
+        assert sorted(json.dumps(v,sort_keys=True) for v in network.routes())==sorted(json.dumps(v,sort_keys=True) for v in before_routes), 'failed install left routes'
         print('Real systemd installer, occupied ports, QR decode, client key/CSR approval, QUIC/TUN, failed-update recovery, update/rollback and neighbor preservation passed')
     finally:
         if importer and importer.poll() is None: importer.kill();importer.wait()
