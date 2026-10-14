@@ -101,7 +101,20 @@ try{
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'reconnect-measurements.json');if($LASTEXITCODE){throw 'Fresh session after recovery failed'}
+ # Crash this session's authenticated helper while keeping Core alive. Its
+ # dynamic permits must disappear and persistent deny must cover the lost TUN.
+ $helperPath=(Resolve-Path (Join-Path $dist 'ConnectCoreNetwork.exe')).Path
+ $helpers=@(Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq $helperPath -and $_.CommandLine -match (' '+$client.Process.Id+'$')})
+ if($helpers.Count -ne 1){throw 'Owned network helper could not be identified uniquely'}
+ Stop-Process -Id $helpers[0].ProcessId -Force;AwaitCore 4 10
+ python "$PSScriptRoot/ip-lab-services.py" failure | Set-Content (Join-Path $out 'helper-failure.log');if($LASTEXITCODE){throw 'Helper crash fell back direct'}
+ python "$PSScriptRoot/vm-negative-probes.py" | Set-Content (Join-Path $out 'helper-crash-probes.json');if($LASTEXITCODE){throw 'Helper crash exposed direct network'}
+ $client.Send(8);AwaitCore 1 15;$client.Send(2);AwaitCore 3
+ python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'helper-recovery-measurements.json');if($LASTEXITCODE){throw 'Client-command recovery failed'}
+ Write-Output 'HELPER_CRASH_AND_CLIENT_IPC_RECOVERY_PASSED'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Worker shutdown hung'}
+ $deadline=[DateTime]::UtcNow.AddSeconds(5);do{$remaining=@(Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq $helperPath});if(!$remaining.Count){break};Start-Sleep -Milliseconds 100}while([DateTime]::UtcNow -lt $deadline)
+ if($remaining.Count){throw 'Owned helper remained after disconnect'}
  ReceiveCapture (Join-Path $out 'linux-underlay.pcap')
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'linux-capture-verification.json');if($LASTEXITCODE){throw 'Linux underlay contained plaintext'}
  $passed=$true
