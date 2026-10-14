@@ -67,7 +67,8 @@ async function enrollment() {
   action(body,'Проверить и добавить',async()=> { if (!verified.checked) throw new Error('Подтвердите проверку устройства'); await api('/api/enroll',{name:name.value,ip:ip.value,csr:csr.value,certificate:cert.value,challenge:data.challenge}); $('dialog').close(); await refresh(); },true);
 }
 function invitation() {
- const body=dialog('Доступ по одноразовой ссылке'),name=field(body,'Название устройства'),ip=field(body,'Назначенный IPv4');
+ const used=new Set((snapshot?.devices||[]).filter(d=>d.access==='enabled').map(d=>d.ip)),base=snapshot?.device_network?.split('/')[0].split('.').slice(0,3).join('.');let suggested='';if(base){for(let n=2;n<255;n++){if(!used.has(`${base}.${n}`)){suggested=`${base}.${n}`;break;}}}
+ const body=dialog('Доступ по одноразовой ссылке'),name=field(body,'Название устройства'),ip=field(body,'Назначенный IPv4',suggested);
  paragraph(body,'Ссылка действует 15 минут и выдаётся один раз. Клиент создаст ключ на устройстве. После сравнения отпечатка подтвердите регистрацию в панели.','field-note');
  action(body,'Выпустить ссылку',async()=>{const v=await api('/api/invite',{name:name.value,ip:ip.value});const out=dialog('Приглашение CONNECT');const link=field(out,'connect:// — передайте только нужному владельцу',v.link,true);link.readOnly=true;const img=document.createElement('img');img.src='data:image/png;base64,'+v.qr_png;img.alt='QR одноразового приглашения CONNECT';img.width=280;img.height=280;out.append(img);action(out,'Копировать ссылку',async()=>{await navigator.clipboard.writeText(v.link);notice('Ссылка скопирована');});paragraph(out,'Импорт на устройстве: connect-core import-link NEW_DIRECTORY, затем передайте ссылку через stdin. Закрытый ключ не входит в ссылку или QR. Клиент покажет отпечаток для сравнения.','field-note');},true);
 }
@@ -77,11 +78,17 @@ async function registrations() {
 }
 function settings() {
   if (!snapshot) { notice('Сначала получите подтверждённое состояние ядра'); return; }
-  const body = dialog('Настройки'), endpoint = field(body,'IP-адрес и порт',snapshot.endpoint), iface = field(body,'Сетевой интерфейс',snapshot.interface), destinations = field(body,'Разрешённые сети — одна на строку',snapshot.destinations.join('\n'),true);
+  const body = dialog('Настройки');
+  if(snapshot.environment==='managed-vps'){
+   paragraph(body,`${snapshot.endpoint} · ${snapshot.interface} · ${snapshot.device_network}`);
+   paragraph(body,'Сеть принадлежит установщику. Изменение её параметров требует отдельной проверенной настройки, чтобы не затронуть соседние VPN.','field-note');
+  }else{
+  const endpoint = field(body,'IP-адрес и порт',snapshot.endpoint), iface = field(body,'Сетевой интерфейс',snapshot.interface), destinations = field(body,'Разрешённые сети — одна на строку',snapshot.destinations.join('\n'),true);
   paragraph(body,'Сетевые параметры можно сохранить только после остановки сервера. Действуют ограничения изолированной лаборатории: частные IPv4 и сети /24 или уже.','field-note');
   action(body,'Сохранить сетевые параметры',async()=> {await api('/api/settings',{endpoint:endpoint.value,interface:iface.value,destinations:destinations.value.split('\n').map(s=>s.trim()).filter(Boolean)}); $('dialog').close(); await refresh();},true);
+  }
   paragraph(body,'Авторизация: администратор, сессии 8 часов, 5 попыток входа в минуту. Пароль меняется локально: connect-ui password ui.json, затем перезапуск панели.','field-note');
-  paragraph(body,'Журнал: последние 100 событий управления, без секретов, в памяти. Ядро не поддерживает уровни журналирования и безопасное автообновление; эти настройки недоступны. Обновление выполняется вручную из проверенного исходного кода.','field-note');
+  paragraph(body,'Журнал: последние 100 событий управления, без секретов, в памяти. Уровни журналирования и безопасное автообновление из браузера недоступны. Для VPS есть отдельная команда обновления с проверкой и откатом.','field-note');
   action(body,'Сменить тему',async()=>setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 }
 $('login-form').onsubmit = async e => { e.preventDefault(); try { const s = await api('/auth/login',{username:$('username').value,password:$('password').value}); csrf=s.csrf; text('login-error',''); signedIn(); await refresh(); } catch (error) { text('login-error',error.message); } };
