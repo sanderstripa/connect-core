@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transactional systemd installer. Requires a reviewed, immutable source revision."""
+"""Transactional systemd installer with automatic, read-only VPS discovery."""
 import argparse
 import fcntl
 import getpass
@@ -77,6 +77,48 @@ def ensure_fresh():
     for name in USERS:
         if run('getent', 'passwd', name, check=False).returncode == 0: raise RuntimeError(f'User {name} already exists')
     if run('getent', 'group', GROUP, check=False).returncode == 0: raise RuntimeError(f'Group {GROUP} already exists')
+
+def prepare_install(args):
+    """Choose unused defaults; explicit operator choices must pass unchanged."""
+    route = json.loads(run('ip', '-j', '-4', 'route', 'get', '1.1.1.1').stdout)[0]
+    args.uplink = args.uplink or route['dev']
+    if not args.endpoint:
+        interfaces = json.loads(run('ip', '-j', '-4', 'addr').stdout)
+        candidates = [v['local'] for interface in interfaces if interface.get('ifname') == args.uplink
+                      for v in interface.get('addr_info', []) if v.get('local') and ipaddress.IPv4Address(v['local']).is_global]
+        if route.get('prefsrc') in candidates: candidates = [route['prefsrc']] + [v for v in candidates if v != route['prefsrc']]
+        if not candidates: raise RuntimeError('No assigned public IPv4 on the egress interface; cloud NAT requires a separate bind/advertised endpoint setup')
+        args.endpoint = candidates[0] + ':0'
+        automatic_endpoint = True
+    else: automatic_endpoint = False
+    address, port = args.endpoint.rsplit(':', 1)
+    used = {}
+    def choose(explicit, default, kind):
+        if explicit is not None:
+            if explicit in used: raise RuntimeError('CONNECT ports must be distinct')
+            check_ports({explicit: kind}); used[explicit] = kind; return explicit
+        for candidate in range(default, min(default + 1000, 65536)):
+            if candidate in used: continue
+            try: check_ports({candidate: kind})
+            except (RuntimeError, OSError): continue
+            used[candidate] = kind; return candidate
+        raise RuntimeError('No free CONNECT port in the automatic search range')
+    # Reserve all explicit choices before selecting any defaults.
+    explicit = [(int(port) if not automatic_endpoint else None, socket.SOCK_DGRAM),
+                (args.panel_port, socket.SOCK_STREAM), (args.control_port, socket.SOCK_STREAM), (args.enrollment_port, socket.SOCK_STREAM)]
+    for value, kind in explicit:
+        if value is not None: choose(value, 0, kind)
+    data_port = int(port) if not automatic_endpoint else choose(None, 17444, socket.SOCK_DGRAM)
+    args.endpoint = str(ipaddress.IPv4Address(address)) + ':' + str(data_port)
+    for name, default in [('panel_port', 17890), ('control_port', 17891), ('enrollment_port', 17900)]:
+        if getattr(args, name) is None: setattr(args, name, choose(None, default, socket.SOCK_STREAM))
+    if not args.pool:
+        routes = json.loads(run('ip', '-j', '-4', 'route', 'show', 'table', 'all').stdout)
+        networks = [ipaddress.IPv4Network(v['dst'], strict=False) for v in routes if v.get('dst') not in (None, 'default', '0.0.0.0/0')]
+        args.pool = next((str(n) for i in range(231, 256) for n in [ipaddress.IPv4Network(f'10.{i}.0.0/24')]
+                          if not any(n.overlaps(existing) for existing in networks)), None)
+        if args.pool is None: raise RuntimeError('No unused private CONNECT subnet; no routes were changed')
+    check_ports(used)
 
 def extract_source(archive, destination):
     import tarfile
@@ -244,7 +286,7 @@ def install(args, revision, release):
         health(m)
         m['installed'] = True; save(JOURNAL / 'manifest.json', m)
         print(f'CONNECT installed. Panel: http://127.0.0.1:{args.panel_port} (admin). Use SSH forwarding for remote administration.')
-        print(f'Update: sudo python3 {ROOT}/current/scripts/connect-install.py update --revision FULL_COMMIT_SHA')
+        print('Update: curl -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash -s -- update')
         print(f'Rollback installation: sudo python3 {ROOT}/current/scripts/connect-install.py uninstall')
     except BaseException:
         rollback_install(m)
@@ -278,21 +320,17 @@ def update(args, m, revision, release):
     print('CONNECT updated; credentials, device registrations and revocations preserved. Previous binary revision retained.')
 
 def main():
-    p = argparse.ArgumentParser(); p.add_argument('action', choices=['install', 'update', 'rollback', 'uninstall', 'status'])
-    p.add_argument('--revision'); p.add_argument('--source'); p.add_argument('--endpoint'); p.add_argument('--pool', default='10.231.0.0/24'); p.add_argument('--uplink')
-    p.add_argument('--panel-port', type=int, default=17890); p.add_argument('--control-port', type=int, default=17891); p.add_argument('--enrollment-port', type=int, default=17900)
+    p = argparse.ArgumentParser(); p.add_argument('action', nargs='?', default='install', choices=['install', 'update', 'rollback', 'uninstall', 'status'])
+    p.add_argument('--revision'); p.add_argument('--source'); p.add_argument('--endpoint'); p.add_argument('--pool'); p.add_argument('--uplink')
+    p.add_argument('--panel-port', type=int); p.add_argument('--control-port', type=int); p.add_argument('--enrollment-port', type=int)
     p.add_argument('--password-file'); p.add_argument('--yes', action='store_true'); a = p.parse_args()
     if sys.platform != 'linux' or os.geteuid() != 0: raise RuntimeError('Run on a Linux systemd VPS as root')
     dependencies()
     with open('/run/connect-core-installer.lock', 'a') as lock:
         os.chmod(lock.name, 0o600); fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if a.action == 'install':
-            if not a.endpoint: raise RuntimeError('--endpoint ASSIGNED_IPV4:UDP_PORT is required')
             ensure_fresh()
-            endpoint_port = int(a.endpoint.rsplit(':', 1)[1])
-            ports = {endpoint_port: socket.SOCK_DGRAM, a.panel_port: socket.SOCK_STREAM, a.control_port: socket.SOCK_STREAM, a.enrollment_port: socket.SOCK_STREAM}
-            if len(ports) != 4: raise RuntimeError('CONNECT ports must be distinct')
-            check_ports(ports)
+            prepare_install(a)
         else:
             m = json.loads((JOURNAL / 'manifest.json').read_text()); verify_owned(m)
             if a.action == 'status': print(json.dumps({k:v for k,v in m.items() if k in ['schema','revision','previous_revision','panel_port','installed']}, indent=2)); return

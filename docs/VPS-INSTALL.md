@@ -15,19 +15,23 @@ iproute2, iptables и доступным `/dev/net/tun`. Ubuntu 24.04 — про
 1.27.0 скачивается в временный каталог с проверкой официального SHA-256, без
 установки в системный PATH. Код и зависимости собираются из закреплённого коммита.
 
-Замените `COMMIT_SHA` на полный проверенный SHA из PR, а `VPS_IP` — на IPv4,
-**назначенный сетевому интерфейсу этого VPS**:
+Скопируйте команду целиком. Заменять адрес, версию или другие значения не нужно:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/COMMIT_SHA/scripts/install-vps.sh | sudo bash -s -- install --revision COMMIT_SHA --endpoint VPS_IP:17444
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash
 ```
 
 Это одна команда, но изменения не бесконтрольные: после проверок нужно ответить
 `yes` на конкретный план и ввести пароль панели дважды через скрытый терминальный
 ввод. Пароль не находится в аргументах процесса, ссылках, журнале или выводе.
 Текущая ветка — `feat/connect-ui-local-control`, [PR #3](https://github.com/sanderstripa/connect-core/pull/3).
-Для воспроизводимости установщик не скачивает и не запускает изменяемый `latest`.
-Адрес raw-скрипта и `--revision` должны указывать на один проверенный коммит.
+Команда использует канал этой ветки, пока PR не слит. Установщик один раз получает
+полный SHA канала через GitHub API и собирает исходники именно этого коммита;
+SHA сохраняется в журнале установки. Явный `--revision` остаётся доступен.
+Публичный IPv4 выбирается из адресов исходящего интерфейса VPS. По умолчанию
+подбираются свободные порты начиная с 17444/17890/17891/17900 и отдельная /24,
+не пересекающаяся с существующими маршрутами. Занятые порты пропускаются;
+если порт задан явно, конфликт приводит к отказу, а не замене чужой службы.
 
 Не запускайте команду на действующем VPS без согласования. Разработка и проверки
 этой версии выполнялись на локальных фикстурах и одноразовом CI-сервере.
@@ -161,7 +165,7 @@ handler, импорт в старый native lab client из PR #2, мобиль
 ## Обновление и откат
 
 ```sh
-sudo python3 /opt/connect-core/current/scripts/connect-install.py update --revision FULL_REVIEWED_COMMIT_SHA
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/sanderstripa/connect-core/feat/connect-ui-local-control/scripts/install-vps.sh | sudo bash -s -- update
 sudo python3 /opt/connect-core/current/scripts/connect-install.py rollback
 sudo python3 /opt/connect-core/current/scripts/connect-install.py status
 ```

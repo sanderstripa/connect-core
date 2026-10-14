@@ -90,6 +90,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y iproute2 iptables zbar-tools
       - run: python3 -m py_compile scripts/connect-install.py scripts/connect-vps-network.py scripts/installer-smoke.py
       - run: bash -n scripts/install-vps.sh
+      - run: python3 scripts/installer-discovery-test.py
       - run: go build -o bin/connect-vps-probe ./scripts/vps-probe.go
       - run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_INSTALL_TEST=1 PATH="$PATH" python3 scripts/installer-smoke.py
       - name: Owned service diagnostics
