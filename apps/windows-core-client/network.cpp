@@ -150,7 +150,7 @@ void removeOwnedAdapter(const GUID& expected,NET_LUID old){
   HKEY key=SetupDiOpenDevRegKey(devices,&device,DICS_FLAG_GLOBAL,0,DIREG_DRV,KEY_QUERY_VALUE);if(key==INVALID_HANDLE_VALUE)continue;
   wchar_t instance[128]{};DWORD size=sizeof(instance),type=0;LSTATUS read=RegQueryValueExW(key,L"NetCfgInstanceId",nullptr,&type,reinterpret_cast<BYTE*>(instance),&size);RegCloseKey(key);
   if(read!=ERROR_SUCCESS||type!=REG_SZ||size<sizeof(wchar_t)||size>sizeof(instance)||size%sizeof(wchar_t)||instance[size/sizeof(wchar_t)-1]!=0||_wcsicmp(instance,guid))continue;
-  found=true;SP_REMOVEDEVICE_PARAMS removal{};removal.ClassInstallHeader.cbSize=sizeof(SP_CLASSINSTALL_HEADER);removal.ClassInstallHeader.InstallFunction=DIF_REMOVE;removal.Scope=DICS_FLAG_GLOBAL;
+  found=true;SP_DEVINSTALL_PARAMS_W install{sizeof(install)};if(!SetupDiGetDeviceInstallParamsW(devices,&device,&install)){error=GetLastError();break;}install.Flags|=DI_QUIETINSTALL;install.hwndParent=nullptr;if(!SetupDiSetDeviceInstallParamsW(devices,&device,&install)){error=GetLastError();break;}SP_REMOVEDEVICE_PARAMS removal{};removal.ClassInstallHeader.cbSize=sizeof(SP_CLASSINSTALL_HEADER);removal.ClassInstallHeader.InstallFunction=DIF_REMOVE;removal.Scope=DICS_FLAG_GLOBAL;
   if(!SetupDiSetClassInstallParamsW(devices,&device,&removal.ClassInstallHeader,sizeof(removal))||!SetupDiCallClassInstaller(DIF_REMOVE,devices,&device)){error=GetLastError();break;}
   error=ERROR_SUCCESS;break;
  }
