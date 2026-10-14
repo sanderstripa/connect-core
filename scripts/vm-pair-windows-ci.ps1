@@ -35,13 +35,13 @@ function Start-LabProcess([string]$file,[string[]]$arguments){
  foreach($argument in $arguments){$info.ArgumentList.Add($argument)}
  $p=[Diagnostics.Process]::Start($info)
  $p.StandardInput.NewLine="`n"
- return [pscustomobject]@{process=$p;pending=$p.StandardOutput.ReadLineAsync();lines=[Collections.Generic.List[string]]::new();history=[Collections.Generic.List[string]]::new();error=$p.StandardError.ReadToEndAsync()}
+ return [pscustomobject]@{process=$p;reader=$p.StandardOutput;writer=$p.StandardInput;pending=$p.StandardOutput.ReadLineAsync();lines=[Collections.Generic.List[string]]::new();history=[Collections.Generic.List[string]]::new();error=$p.StandardError.ReadToEndAsync()}
 }
 function Pump($record){
  while($record.pending -and $record.pending.IsCompleted){
   $line=$record.pending.GetAwaiter().GetResult()
   if($null -eq $line){$record.pending=$null;break}
-  $record.lines.Add($line);$record.history.Add($line);$record.pending=$record.process.StandardOutput.ReadLineAsync()
+  $record.lines.Add($line);$record.history.Add($line);$record.pending=$record.reader.ReadLineAsync()
  }
 }
 function Await-Line($record,[string]$pattern,[int]$seconds=60){
@@ -50,7 +50,7 @@ function Await-Line($record,[string]$pattern,[int]$seconds=60){
  throw ("Timed out waiting for $pattern; last output: " + ($record.history | Select-Object -Last 12 | Out-String))
 }
 function Clear-Lines($record){Pump $record;$record.lines.Clear()}
-$vm=$null;$client=$null;$badProcess=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
+$vm=$null;$client=$null;$badProcess=$null;$serialListener=$null;$serialPeer=$null;$captureStarted=$false;$journal=Join-Path $out 'network-journal.json';$badPath=Join-Path $out 'bad-client.json'
 $env:CONNECT_IP_LAB_VM='1'
 $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
 $cfg.interface='ccipvm'
@@ -60,8 +60,17 @@ try{
  # A second, independent Linux kernel; no host bridge/TAP, Hyper-V or physical
  # route changes. Guest default-drop rules and no default route isolate SLIRP;
  # its restrict mode cannot carry UDP replies (see VM-PAIR.md).
- $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
+ $serialListener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,17445);$serialListener.Start()
+ $accept=$serialListener.AcceptTcpClientAsync()
+ $vm=Start-LabProcess $qemu @('-machine','q35','-accel','tcg,thread=multi','-smp','2','-m','768','-display','none','-monitor','none','-chardev','socket,id=control,host=127.0.0.1,port=17445','-serial','chardev:control','-no-reboot','-kernel',(Join-Path $boot 'vmlinuz'),'-initrd',(Join-Path $boot 'rootfs.cpio.gz'),'-append','console=ttyS0 rdinit=/init connect_lab_vm=1 panic=1','-netdev','user,id=lab,hostfwd=udp:127.0.0.1:17444-:17444','-device','virtio-net-pci,netdev=lab')
+ if(-not $accept.Wait(10000)){throw 'QEMU serial controller did not connect'}
+ $serialPeer=$accept.GetAwaiter().GetResult();$serialListener.Stop()
+ $vm.reader=[IO.StreamReader]::new($serialPeer.GetStream())
+ $vm.writer=[IO.StreamWriter]::new($serialPeer.GetStream(),[Text.UTF8Encoding]::new($false));$vm.writer.AutoFlush=$true;$vm.writer.NewLine="`n"
+ $vm.pending=$vm.reader.ReadLineAsync()
  Await-Line $vm '^LAB_SERVER_READY$' 180
+ $vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 15
+ Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'windows-adapters.log')
  $client=Start-LabProcess (Join-Path $bin 'connect-core.exe') @('ip-client-managed',$profile)
  Await-Line $client '"state":"ready"' 30
  & "$PSScriptRoot/lab-network-windows.ps1" -Action apply -Journal $journal -Config $profile
@@ -91,13 +100,13 @@ try{
  python -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); [s.sendto(b'CONNECT-invalid-'+bytes([i]),('127.0.0.1',17444)) for i in range(100)]; s.close()"
  if($LASTEXITCODE -ne 0){throw 'Malformed underlay probe failed'}
  # Authenticated client retains TUN/routes/firewall during loss and reconnect.
- Clear-Lines $vm;Clear-Lines $client;$vm.process.StandardInput.WriteLine('stop-server')
+ Clear-Lines $vm;Clear-Lines $client;$vm.writer.WriteLine('stop-server')
  Await-Line $vm '^LAB_SERVER_STOPPED$'
  python "$PSScriptRoot/ip-lab-services.py" failure
  if($LASTEXITCODE -ne 0){throw 'Endpoint failure leaked'}
  Await-Line $client '"state":"reconnecting"' 35
  if(-not (Get-NetAdapter -Name 'ccipvm' -ErrorAction SilentlyContinue)){throw 'Reconnect removed the protected interface'}
- Clear-Lines $vm;Clear-Lines $client;$vm.process.StandardInput.WriteLine('start-server')
+ Clear-Lines $vm;Clear-Lines $client;$vm.writer.WriteLine('start-server')
  Await-Line $vm '^LAB_SERVER_READY$'
  Await-Line $client '"state":"ready"' 35
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'recovery-measurements.json')
@@ -106,7 +115,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'IPv4/IPv6/DNS guard failed'}
  $client.process.Refresh();$watch.Stop()
  @{cpu_seconds=$client.process.TotalProcessorTime.TotalSeconds-$startCpu;wall_seconds=$watch.Elapsed.TotalSeconds;working_set_bytes=$client.process.WorkingSet64;peak_working_set_bytes=$client.process.PeakWorkingSet64} | ConvertTo-Json | Set-Content (Join-Path $out 'windows-resources.json')
- Clear-Lines $vm;$vm.process.StandardInput.WriteLine('metrics');Await-Line $vm '^LAB_LINUX_METRICS '
+ Clear-Lines $vm;$vm.writer.WriteLine('metrics');Await-Line $vm '^LAB_LINUX_METRICS '
  @($vm.lines | Where-Object {$_ -match '^LAB_LINUX_METRICS '})[-1].Substring(18) | Set-Content (Join-Path $out 'linux-resources.json')
  # Deliberately crash Core: persistent guard must still stop direct fallback.
  $client.process.Kill();$client.process.WaitForExit()
@@ -114,7 +123,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Core crash leaked'}
  python "$PSScriptRoot/vm-negative-probes.py"
  if($LASTEXITCODE -ne 0){throw 'Crash guard failed'}
- Clear-Lines $vm;$vm.process.StandardInput.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
+ Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 180
  $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
  [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'capture-verification.json')
@@ -124,8 +133,8 @@ try{
  try{
   if($vm -and -not $vm.process.HasExited -and -not (Test-Path (Join-Path $out 'linux-underlay.pcap'))){
    try{
-    Clear-Lines $vm;$vm.process.StandardInput.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 10
-    Clear-Lines $vm;$vm.process.StandardInput.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 30
+    Clear-Lines $vm;$vm.writer.WriteLine('diagnostics');Await-Line $vm '^LAB_DIAGNOSTICS_END$' 10
+    Clear-Lines $vm;$vm.writer.WriteLine('capture');Await-Line $vm '^LAB_PCAP_END$' 30
     $begin=$vm.lines.IndexOf('LAB_PCAP_BEGIN');$end=$vm.lines.IndexOf('LAB_PCAP_END')
     [IO.File]::WriteAllBytes((Join-Path $out 'linux-underlay.pcap'),[Convert]::FromBase64String(($vm.lines.GetRange($begin+1,$end-$begin-1) -join '')))
    }catch{Write-Warning ('Failure capture unavailable: '+$_.Exception.Message)}
@@ -141,6 +150,7 @@ try{
  foreach($record in @($client,$vm,$badProcess)){
   if($record){if(-not $record.process.HasExited){$record.process.Kill();$record.process.WaitForExit()};Pump $record;$name=if($record -eq $vm){'linux-console'}elseif($record -eq $badProcess){'bad-client'}else{'client-events'};$record.history | Set-Content (Join-Path $out ($name+'.log'));$record.error.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($name+'-stderr.log'))}
  }
+ if($serialPeer){$serialPeer.Dispose()};if($serialListener){$serialListener.Stop()}
  # Credentials, vendor binaries and boot image are never uploaded as results.
  Remove-Item -LiteralPath $profile,$badPath -ErrorAction SilentlyContinue
  Remove-Item Env:CONNECT_IP_LAB_VM -ErrorAction SilentlyContinue

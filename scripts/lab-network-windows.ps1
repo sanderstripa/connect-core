@@ -89,12 +89,17 @@ try {
         # NetSecurity rejects the zero-length IPv6 prefix on this Windows image.
         # Two /1 prefixes cover the same complete 128-bit address space.
         Add-Guard 'ipv6' @{RemoteAddress=@('::/1','8000::/1')}
-        Add-Guard 'endpoint-tcp' @{RemoteAddress=$endpoint;Protocol='TCP'}
+        # Loopback 17445 is the disposable QEMU serial controller, not Core IPC.
+        $tcpPorts=if($endpoint -eq '127.0.0.1'){@('1-17444','17446-65535')}else{@('1-65535')}
+        Add-Guard 'endpoint-tcp' @{RemoteAddress=$endpoint;Protocol='TCP';RemotePort=$tcpPorts}
         $ports=@();if($port -gt 1){$ports+=('1-'+($port-1))};if($port -lt 65535){$ports+=(($port+1).ToString()+'-65535')}
         Add-Guard 'endpoint-other-udp' @{RemoteAddress=$endpoint;Protocol='UDP';RemotePort=$ports}
         # A lab service must not become reachable via a physical/default route
         # after the TUN disappears. Inventory every existing alternate adapter.
-        $others=@(Get-NetAdapter -IncludeHidden | Where-Object {$_.InterfaceGuid -ne $adapter.InterfaceGuid -and $_.Name -notlike '*Loopback*'} | Select-Object -ExpandProperty Name)
+        $visible=@(Get-NetAdapter)
+        $unknown=@(Get-NetIPInterface | Where-Object {$_.ConnectionState -eq 'Connected' -and $_.InterfaceAlias -notin $visible.Name -and $_.InterfaceAlias -notlike '*Loopback*'})
+        if($unknown.Count){throw 'Connected hidden interface cannot be guarded by this lab helper'}
+        $others=@($visible | Where-Object {$_.InterfaceGuid -ne $adapter.InterfaceGuid -and $_.Name -notlike '*Loopback*'} | Select-Object -ExpandProperty Name)
         if($others.Count){Add-Guard 'service-outside-tun' @{RemoteAddress='10.232.0.1';InterfaceAlias=$others}}
         $state.interface_attempted=$true;Save-Journal
         Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -NlMtuBytes 1100 -Dhcp Disabled -DadTransmits 0 -InterfaceMetric 5

@@ -20,6 +20,12 @@ public listener, or production credential. This is two independent OS kernels,
 not two processes pretending to be two machines. It is not an independent
 hardware benchmark or a public internet deployment.
 
+QEMU serial control uses a CI-only listener on 127.0.0.1:17445, owned and closed
+by the harness; no Core control API is exposed there. The loopback firewall plan
+preserves that exact TCP control port. Other endpoint TCP ports remain blocked.
+Connected hidden Windows interfaces that cannot be addressed by the helper cause
+setup refusal rather than silently weakening service egress guards.
+
 Linux moves its disposable virtual NIC into an `edge` namespace. A separate
 `service` namespace provides HTTP, TCP binary echo, UDP echo and DNS at
 10.232.0.1. The client has 10.231.0.2/32; policy permits only 10.232.0.1/32.

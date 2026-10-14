@@ -90,8 +90,14 @@ under your own account and do not treat generated keys as production secrets.
 
 The v1 path has no UDP/TUN/QUIC. The v2 isolated path has IPv4 TUN, TCP/UDP/DNS/ICMP
 packets, QUIC datagrams, static device leases and private destination policy.
-SOCKS, IPv6, HTTP/2 fallback, masking, reconnecting existing flows, privileged
-route/DNS/firewall management, full-device kill switch, runtime adapters and
+The managed v2 client adds fresh authenticated reconnects while retaining and
+draining its native interface, plus private versioned status/stop IPC. A separate
+CI-only helper journals a fixed lab route, DNS and persistent firewall guards
+with targeted rollback. Its paired Windows/Linux VM workflow and current evidence
+are described in [the VM stage](docs/VM-PAIR.md) and [validation](docs/VALIDATION.md).
+
+SOCKS, IPv6, HTTP/2 fallback, masking, transparent recovery of existing flows,
+production route/DNS/firewall management, full-device kill switch, runtime adapters and
 administration UI are **not implemented**. Other applications' traffic outside
 the lab is not covered. Namespace leak tests do not prove system-wide Windows
 VPN leak safety. Dependencies/licenses and exact reuse are documented in
