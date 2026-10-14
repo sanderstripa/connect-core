@@ -110,6 +110,9 @@ func (c Config) Validate(server bool) (map[string]Policy, error) {
 		if used[ip] || ip == ap.Addr() {
 			return errors.New("duplicate device/endpoint IP")
 		}
+		if system && ip == netip.MustParseAddr(c.Network.DNS) {
+			return errors.New("device address must differ from tunnel DNS")
+		}
 		for _, p := range prefixes {
 			if system {
 				continue

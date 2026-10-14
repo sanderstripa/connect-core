@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/Microsoft/go-winio"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -120,6 +121,15 @@ func openHelper(ctx context.Context) (net.Conn, error) {
 		return nil, e
 	}
 	defer windows.CloseHandle(p)
+	var token windows.Token
+	if e = windows.OpenProcessToken(p, windows.TOKEN_QUERY, &token); e != nil {
+		return nil, e
+	}
+	elevated := token.IsElevated()
+	token.Close()
+	if !elevated {
+		return nil, errors.New("network helper must have an elevated token")
+	}
 	name := make([]uint16, 32768)
 	size := uint32(len(name))
 	if e = windows.QueryFullProcessImageName(p, 0, &name[0], &size); e != nil {
@@ -167,6 +177,7 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	}
 	kind, payload, e := desktop.Read(conn)
 	if e != nil || kind != desktop.Status || len(payload) != desktop.StatusSize || binary.LittleEndian.Uint32(payload) != desktop.Connected {
+		if e==nil&&len(payload)==desktop.StatusSize{return nil,fmt.Errorf("network helper setup failed: Windows=%d stage=%d protection=%d",binary.LittleEndian.Uint32(payload[8:]),binary.LittleEndian.Uint32(payload[16:]),binary.LittleEndian.Uint32(payload[32:]))}
 		return nil, errors.New("Wintun/network setup failed; inspect or recover retained guard")
 	}
 	conn.SetDeadline(time.Time{})
