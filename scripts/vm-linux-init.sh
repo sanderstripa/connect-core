@@ -80,6 +80,8 @@ while read -r command; do
   start-server) start_server ;;
   link-down) ip -n edge link set "$nic" down; echo LAB_LINK_DOWN ;;
   link-up) ip -n edge link set "$nic" up; echo LAB_LINK_UP ;;
+  latency-80) modprobe sch_netem; ip netns exec edge tc qdisc replace dev "$nic" root netem delay 80ms limit 1024; echo LAB_LATENCY_80 ;;
+  latency-clear) ip netns exec edge tc qdisc del dev "$nic" root; echo LAB_LATENCY_CLEAR ;;
   diagnostics) cat /artifacts/server.log; cat /artifacts/services.log; cat /artifacts/tun-packets.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys

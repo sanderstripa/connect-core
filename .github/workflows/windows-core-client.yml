@@ -60,6 +60,12 @@ jobs:
           Copy-Item $dll dist/
           Copy-Item build/wintun/wintun/LICENSE.txt dist/WINTUN-LICENSE.txt
       - run: ./scripts/desktop-smoke.ps1 -Directory dist
+      - name: Fetch immutable released native throughput baseline
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/sanderstripa/connect-core/releases/download/v0.2.5/ConnectCore-Windows-x64-545b5f6.zip' -OutFile build/native-baseline.zip
+          if ((Get-FileHash build/native-baseline.zip -Algorithm SHA256).Hash.ToLower() -ne '2333f2f126aa8dfd03c5f35c649e56ea9960b9d093971c5460d961a6ea8067b0') { throw 'Released native baseline hash mismatch' }
+          Expand-Archive build/native-baseline.zip build/native-baseline
       - uses: actions/download-artifact@v4
         with:
           name: desktop-disposable-linux-boot

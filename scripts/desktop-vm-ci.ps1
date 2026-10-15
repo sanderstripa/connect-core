@@ -107,6 +107,28 @@ try{
  $client.Send(1,$profile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
  if($client.Mode -ne 1){throw 'System Wintun mode not active'}
  Write-Output 'REAL_WINDOWS_WINTUN_SYSTEM_ROUTES_READY'
+ # Compare the released Windows binaries and this candidate on the SAME live
+ # guest, Wintun, full-system policy and TCP fixture. Pipe-only tests miss this.
+ function MeasureNativeDuplex([string]$label) {
+  $helper=[Diagnostics.Process]::GetProcessById($client.Helper)
+  $client.Process.Refresh();$helper.Refresh()
+  $workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
+  $clock=[Diagnostics.Stopwatch]::StartNew()
+  python "$PSScriptRoot/ip-lab-services.py" throughput | Set-Content (Join-Path $out ($label+'-throughput-measurements.json'))
+  if($LASTEXITCODE){throw ('Native duplex throughput failed: '+$label)}
+  $clock.Stop();$client.Process.Refresh();$helper.Refresh()
+  @{scope='disposable Windows Wintun + Linux QEMU, not public VPS';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
+ }
+ $guestWriter.WriteLine('latency-80');AwaitGuest '^LAB_LATENCY_80$'
+ MeasureNativeDuplex 'candidate'
+ $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Candidate shutdown before comparison hung'}
+ $client=[CorePipe]::new((Join-Path $root 'build/native-baseline/connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
+ AwaitCore 1 10;$client.Send(2);AwaitCore 3
+ MeasureNativeDuplex 'released-025'
+ $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Baseline shutdown after comparison hung'}
+ $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
+ AwaitCore 1 10;$client.Send(2);AwaitCore 3
+ $guestWriter.WriteLine('latency-clear');AwaitGuest '^LAB_LATENCY_CLEAR$'
  Find-NetRoute -RemoteIPAddress 10.232.0.1 | Format-List | Out-String | Set-Content (Join-Path $out 'selected-route.log')
  $client.Send(4);Start-Sleep -Seconds 4;$client.Status() | Set-Content (Join-Path $out 'initial-dns-status.log')
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'measurements.json')

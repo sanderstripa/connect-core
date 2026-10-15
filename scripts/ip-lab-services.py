@@ -149,6 +149,34 @@ def check():
     samples.sort()
     print(json.dumps({"http": "pass", "udp_100": "pass", "dns": "pass", "connections": connection_results, "tcp_half_close": "pass", "udp_rtt_ms": {"p50": statistics.median(samples), "p95": samples[94], "p99": samples[98]}, "tcp_1MiB_echo_seconds": elapsed, "tcp_useful_MiB_per_second": 1 / elapsed}, indent=2), flush=True)
 
+
+def throughput():
+    # The same real TCP echo fixture is used on Windows and Linux. This is
+    # simultaneous upload/download, not a public one-way speedtest or IPC test.
+    streams, size = 4, 8 * 1024 * 1024
+    gate = threading.Barrier(streams)
+    samples, stop = [], threading.Event()
+    def latency():
+        while not stop.is_set():
+            started=time.perf_counter()
+            if exchange(18082, CANARY) != CANARY: raise AssertionError('latency probe corrupted')
+            samples.append((time.perf_counter()-started)*1000)
+            stop.wait(.05)
+    started=time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=streams+1) as pool:
+        probe=pool.submit(latency)
+        try:
+            durations=list(pool.map(lambda _: tcp_echo(size,barrier=gate),range(streams)))
+        finally:
+            stop.set()
+        probe.result()
+    elapsed=time.perf_counter()-started
+    if not samples: raise AssertionError('No loaded latency measurements')
+    samples.sort()
+    print(json.dumps({'scope':'real TCP duplex through OS TUN, not public Internet', 'streams':streams,
+        'bytes_per_direction':streams*size,'seconds':elapsed,'useful_mbps_per_direction':streams*size*8/elapsed/1e6,
+        'max_stream_seconds':max(durations),'udp_loaded_rtt_ms':{'samples':len(samples),'p50':statistics.median(samples),'p95':samples[min(len(samples)-1,int(len(samples)*.95))],'max':max(samples)}},indent=2),flush=True)
+
 def ready():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     deadline = time.monotonic() + 5
@@ -202,4 +230,4 @@ def self_check():
     print("fixture binary TCP/duplex/half-close self-check passed", flush=True)
 
 if __name__ == "__main__":
-    {"serve": serve, "ready": ready, "check": check, "failure": failure, "denied": denied, "self-check": self_check}[sys.argv[1]]()
+    {"serve": serve, "ready": ready, "check": check, "throughput": throughput, "failure": failure, "denied": denied, "self-check": self_check}[sys.argv[1]]()
