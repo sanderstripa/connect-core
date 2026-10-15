@@ -10,7 +10,11 @@ import (
 
 func awaitState(t testing.TB, events <-chan Event, state string) {
 	t.Helper()
-	deadline := time.After(6 * time.Second)
+	awaitStateWithin(t, events, state, 6*time.Second)
+}
+func awaitStateWithin(t testing.TB, events <-chan Event, state string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
 	for {
 		select {
 		case e := <-events:
@@ -29,7 +33,7 @@ func TestManagedServerRecoveryKeepsInterface(t *testing.T) {
 	stats := &Stats{}
 	var opens atomic.Int32
 	events := make(chan Event, 16)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -56,7 +60,10 @@ func TestManagedServerRecoveryKeepsInterface(t *testing.T) {
 	_ = f.closeSocket()
 	e := <-f.done
 	f.done <- e
-	awaitState(t, events, "reconnecting")
+	// The UDP socket is removed immediately, so its final CONNECTION_CLOSE may
+	// never reach the peer. Recovery must also work via the configured 15s idle
+	// deadline, not depend on winning the close-packet/socket-close race.
+	awaitStateWithin(t, events, "reconnecting", QUIC().MaxIdleTimeout+5*time.Second)
 	select {
 	case <-native.done:
 		t.Fatal("interface removed on network loss")
