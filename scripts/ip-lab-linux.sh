@@ -106,9 +106,14 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
     ip -n "$client" link set ccip0 up
     ip -n "$client" route add 10.232.0.1/32 dev ccip0 src 10.231.0.2
   }
-  for latency in 0 40; do
-    ip netns exec "$client" tc qdisc replace dev cw root netem delay "${latency}ms" limit 20000
-    ip netns exec "$edge" tc qdisc replace dev ew root netem delay "${latency}ms" limit 20000
+  latencies=(0 40)
+  rate=${CONNECT_LAB_RATE_MBIT:-0}
+  [[ $rate =~ ^[0-9]+$ ]] || { echo 'Invalid disposable shaping rate'; exit 1; }
+  shaping=(); duration=5
+  if [[ $rate != 0 ]]; then shaping=(rate "${rate}mbit"); latencies=(40); duration=10; fi
+  for latency in "${latencies[@]}"; do
+    ip netns exec "$client" tc qdisc replace dev cw root netem delay "${latency}ms" limit 20000 "${shaping[@]}"
+    ip netns exec "$edge" tc qdisc replace dev ew root netem delay "${latency}ms" limit 20000 "${shaping[@]}"
     for route in direct vpn; do
       target=192.168.231.1; [[ $route != vpn ]] || target=10.232.0.1
       for direction in upload download; do
@@ -116,19 +121,23 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
         # Every direction starts a new authenticated QUIC session.
         if [[ $route == vpn ]]; then restart_perf_client; fi
         options=(); [[ $direction != download ]] || options+=(-R)
-        ip netns exec "$client" timeout 30 iperf3 -4 -c "$target" -p 18084 -P 4 -t 5 -O 1 --connect-timeout 10000 -J "${options[@]}" >"$artifacts/${route}-${latency}-${direction}.json"
+        ip netns exec "$client" ping -n -i 0.05 -w "$((duration+2))" "$target" >"$artifacts/${route}-${latency}-${direction}.ping" 2>&1 &
+        pingpid=$!; pids+=("$pingpid")
+        ip netns exec "$client" timeout 30 iperf3 -4 -c "$target" -p 18084 -P 4 -t "$duration" -O 1 --connect-timeout 10000 -J "${options[@]}" >"$artifacts/${route}-${latency}-${direction}.json"
+        wait "$pingpid" || true
       done
     done
   done
-  python3 - "$artifacts" <<'PY'
-import json,pathlib,sys,statistics
+  python3 - "$artifacts" "$rate" <<'PY'
+import json,pathlib,sys,statistics,re
 p=pathlib.Path(sys.argv[1]);rows=[]
 for f in sorted(p.glob('*-*-*.json')):
     if not f.stem.startswith(('direct-','vpn-')): continue
     d=json.loads(f.read_text());mode,delay,direction=f.stem.split('-')
     rtts=[v['sender']['mean_rtt']/1000 for v in d['end'].get('streams',[]) if v.get('sender',{}).get('mean_rtt') is not None]
-    rows.append(dict(mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),tcp_rtt_ms=statistics.median(rtts) if rtts else None,cpu=d['end'].get('cpu_utilization_percent')))
-out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','streams':4,'results':rows}
+    latencies=[float(v) for v in re.findall(r'time=([0-9.]+) ms',(p/(f.stem+'.ping')).read_text())]
+    rows.append(dict(loaded_ping_ms={'samples':len(latencies),'median':statistics.median(latencies) if latencies else None,'p95':sorted(latencies)[min(len(latencies)-1,int(len(latencies)*.95))] if latencies else None,'max':max(latencies) if latencies else None},mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),tcp_rtt_ms=statistics.median(rtts) if rtts else None,cpu=d['end'].get('cpu_utilization_percent')))
+out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','rate_mbit':int(sys.argv[2]),'streams':4,'results':rows}
 (p/'throughput-summary.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
 PY
   exit 0

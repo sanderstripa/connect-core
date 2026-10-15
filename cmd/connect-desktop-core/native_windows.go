@@ -37,7 +37,7 @@ type nativeBridge struct {
 }
 type nativeView struct {
 	bridge      *nativeBridge
-	packets     chan []byte
+	packets     chan ipvpn.QueuedPacket
 	done        chan struct{}
 	once        sync.Once
 	diagnostics sync.Mutex
@@ -211,6 +211,7 @@ func (b *nativeBridge) read() {
 		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32) {
 			if len(p) == 32 {
 				b.stats.Dropped.Add(binary.LittleEndian.Uint64(p[24:]))
+				b.stats.RingDrops.Add(binary.LittleEndian.Uint64(p[24:]))
 				fmt.Fprintf(os.Stderr, "CONNECT Wintun ring drops: packets=%d\n", binary.LittleEndian.Uint64(p[24:]))
 			}
 			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
@@ -229,18 +230,20 @@ func (b *nativeBridge) read() {
 		b.mu.Lock()
 		if b.active != nil {
 			select {
-			case b.active.packets <- p:
+			case b.active.packets <- ipvpn.QueuedPacket{Data: p, At: time.Now()}:
 			default:
+				b.stats.QueueDrops.Add(1)
 				b.stats.Dropped.Add(1)
 			}
 		} else {
+			b.stats.InactiveDrops.Add(1)
 			b.stats.Dropped.Add(1)
 		}
 		b.mu.Unlock()
 	}
 }
 func (b *nativeBridge) view() *nativeView {
-	v := &nativeView{bridge: b, packets: make(chan []byte, ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
+	v := &nativeView{bridge: b, packets: make(chan ipvpn.QueuedPacket, ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
 	b.mu.Lock()
 	b.active = v
 	b.mu.Unlock()
@@ -252,7 +255,9 @@ func (v *nativeView) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	case <-v.bridge.done:
 		return 0, io.EOF
-	case pkt := <-v.packets:
+	case queued := <-v.packets:
+		v.bridge.stats.NativeQueue.Observe(time.Since(queued.At))
+		pkt := queued.Data
 		src, _, err := ipvpn.Packet(pkt)
 		reason := ""
 		if err != nil {
