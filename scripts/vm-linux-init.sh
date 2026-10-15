@@ -70,6 +70,7 @@ start_server(){
  ip -n edge link set ccip0 up
  ip -n edge route add 10.231.0.2/32 dev ccip0
  ip netns exec edge tcpdump -l -n -i ccip0 >/artifacts/tun-packets.log 2>&1 &
+ tuncapture=$!
  echo LAB_SERVER_READY
 }
 start_server
@@ -82,6 +83,20 @@ while read -r command; do
   link-up) ip -n edge link set "$nic" up; echo LAB_LINK_UP ;;
   latency-80) modprobe sch_netem; ip netns exec edge tc qdisc replace dev "$nic" root netem delay 80ms limit 1024; echo LAB_LATENCY_80 ;;
   latency-clear) ip netns exec edge tc qdisc del dev "$nic" root; echo LAB_LATENCY_CLEAR ;;
+  pause-captures) kill -INT "$capture" "$tuncapture"; wait "$capture" 2>/dev/null || true; wait "$tuncapture" 2>/dev/null || true; capture=0; tuncapture=0; echo LAB_CAPTURES_PAUSED ;;
+  resume-captures)
+   [ "$capture" -eq 0 ] && [ "$tuncapture" -eq 0 ]
+   ip netns exec edge tcpdump -U -n -s 160 -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
+   capture=$!
+   ip netns exec edge tcpdump -l -n -i ccip0 >/artifacts/tun-packets.log 2>/artifacts/tun-capture.log &
+   tuncapture=$!
+   for i in $(seq 1 100); do
+    if grep -q 'listening on' /artifacts/capture.log && grep -q 'listening on' /artifacts/tun-capture.log; then break; fi
+    sleep .05
+   done
+   grep -q 'listening on' /artifacts/capture.log; grep -q 'listening on' /artifacts/tun-capture.log
+   echo LAB_CAPTURES_RESUMED
+   ;;
   diagnostics) cat /artifacts/server.log; cat /artifacts/services.log; cat /artifacts/tun-packets.log; ip -n edge addr; ip -n edge route; ip netns exec edge ss -lun; ip netns exec edge nft list ruleset; echo LAB_DIAGNOSTICS_END ;;
   metrics) python3 - "$server" <<'PY'
 import json,os,pathlib,sys

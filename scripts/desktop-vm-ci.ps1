@@ -88,20 +88,48 @@ try{
  if(!$accept.Wait(10000)){throw 'Guest serial unavailable'};$serial=$accept.GetAwaiter().GetResult();$listener.Stop()
  $guestReader=[IO.StreamReader]::new($serial.GetStream());$guestWriter=[IO.StreamWriter]::new($serial.GetStream(),[Text.UTF8Encoding]::new($false));$guestWriter.AutoFlush=$true;$guestWriter.NewLine="`n";$lineTask=$guestReader.ReadLineAsync()
  AwaitGuest '^LAB_SERVER_READY$' 180
+ $guestWriter.WriteLine('pause-captures');AwaitGuest '^LAB_CAPTURES_PAUSED$'
  # Inventory only current NICs, BEFORE our Wintun is created; capture never
  # includes the plaintext inner tunnel adapter or generic stack components.
  $components=@();$list=pktmon list --include-hidden;$list | Set-Content (Join-Path $out 'physical-components.log')
  foreach($line in $list){if($line -match '^\s*([0-9]+)\s+(.+)$'){$components+=[int]$Matches[1]}}
  if(!$components.Count){throw 'No physical capture components'}
  Get-NetAdapter -IncludeHidden | Select-Object Name,InterfaceDescription,InterfaceGuid,ifIndex | ConvertTo-Json | Set-Content (Join-Path $out 'before-adapters.json')
- pktmon start --capture --comp $components --pkt-size 0 --file-name (Join-Path $out 'physical.etl') | Out-Null
- if($LASTEXITCODE){throw 'NIC capture failed'};$capture=$true
- # Establish that this selected physical capture sees real pre-VPN traffic.
- Invoke-WebRequest 'https://www.wintun.net/' -TimeoutSec 30 -OutFile (Join-Path $out 'capture-baseline.html')
  $cfg=Get-Content (Join-Path $boot 'lab/ip-client.json') -Raw | ConvertFrom-Json
  foreach($field in 'ca','cert','key'){$cfg.trust.$field=Join-Path $boot ('lab/'+[IO.Path]::GetFileName($cfg.trust.$field))}
  $cfg.destinations=@('0.0.0.0/0');$cfg | Add-Member -NotePropertyName network -NotePropertyValue ([pscustomobject]@{mode='system-vpn';dns='10.232.0.1'})
  $profile=Join-Path $out 'private-client.json';$cfg | ConvertTo-Json -Depth 10 | Set-Content $profile -Encoding utf8NoBOM
+ # Isolate real Windows packet handling from TCG's emulated Linux CPU limit.
+ # The server here is explicitly a memory UDP reflector, not a Linux/VPS claim.
+ $componentCfg=$cfg | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+ $componentCfg.endpoint='127.0.0.1:17446'
+ $componentProfile=Join-Path $out 'private-component-client.json';$componentCfg | ConvertTo-Json -Depth 10 | Set-Content $componentProfile -Encoding utf8NoBOM
+ $componentBinary=Join-Path $root 'build/native-packet-perf.exe'
+ $componentInfo=[Diagnostics.ProcessStartInfo]::new($componentBinary)
+ $componentInfo.UseShellExecute=$false;$componentInfo.CreateNoWindow=$true
+ $componentInfo.RedirectStandardInput=$true;$componentInfo.RedirectStandardOutput=$true;$componentInfo.RedirectStandardError=$true
+ $componentInfo.Environment['CONNECT_DISPOSABLE_NATIVE_PERF']='1'
+ $componentInfo.ArgumentList.Add('server');$componentInfo.ArgumentList.Add((Join-Path $boot 'lab/ip-server.json'))
+ $componentServer=[Diagnostics.Process]::Start($componentInfo);$componentErrors=$componentServer.StandardError.ReadToEndAsync()
+ try {
+  $ready=$componentServer.StandardOutput.ReadLineAsync()
+  if(!$ready.Wait(10000) -or $ready.GetAwaiter().GetResult() -ne 'NATIVE_PACKET_REFLECTOR_READY'){throw 'Component reflector unavailable'}
+  foreach($entry in @(@{name='candidate';exe=(Join-Path $dist 'connect-desktop-core.exe')},@{name='released-025';exe=(Join-Path $root 'build/native-baseline/connect-desktop-core.exe')})) {
+   $client=[CorePipe]::new($entry.exe,(Join-Path $out 'private-profile'))
+   $client.Send(1,$componentProfile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
+   $componentServer.Refresh();$client.Process.Refresh();$helper=[Diagnostics.Process]::GetProcessById($client.Helper);$helper.Refresh()
+   $serverCpu=$componentServer.TotalProcessorTime.TotalMilliseconds;$workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
+   $clock=[Diagnostics.Stopwatch]::StartNew();$env:CONNECT_DISPOSABLE_NATIVE_PERF='1'
+   try {& $componentBinary measure | Set-Content (Join-Path $out ($entry.name+'-component-measurements.json'));if($LASTEXITCODE){throw 'Windows packet component measurement failed'}} finally {Remove-Item Env:CONNECT_DISPOSABLE_NATIVE_PERF -ErrorAction SilentlyContinue}
+   $clock.Stop();$componentServer.Refresh();$client.Process.Refresh();$helper.Refresh()
+   @{scope='Windows packet component only, memory reflector, no TCG/Linux/Internet';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;reflector_cpu_ms=$componentServer.TotalProcessorTime.TotalMilliseconds-$serverCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($entry.name+'-component-cpu-measurements.json'))
+   $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Component worker shutdown hung'}
+   $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($entry.name+'-component-stage-measurements.log'))
+  }
+ } finally {
+  if(!$componentServer.HasExited){$componentServer.StandardInput.WriteLine('stop');$componentServer.StandardInput.Close();if(!$componentServer.WaitForExit(10000)){$componentServer.Kill();$componentServer.WaitForExit()}}
+  $componentErrors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'component-reflector.log')
+ }
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  netsh wfp set options netevents=on | Out-Null
  $guestWriter.WriteLine('latency-80');AwaitGuest '^LAB_LATENCY_80$'
@@ -129,9 +157,16 @@ try{
  MeasureNativeDuplex 'released-025'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Baseline shutdown after comparison hung'}
  $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-025-stage-measurements.log')
+ $guestWriter.WriteLine('latency-clear');AwaitGuest '^LAB_LATENCY_CLEAR$'
+ $guestWriter.WriteLine('resume-captures');AwaitGuest '^LAB_CAPTURES_RESUMED$'
+ # Performance traffic has its own counters. Preserve complete captures of
+ # every original security scenario, without bulk files exhausting UART export.
+ 'Performance comparison excluded; complete ordinary TCP/UDP/DNS, failure/recovery and native-window scenarios follow with both captures active.' | Set-Content (Join-Path $out 'capture-scope.log')
+ pktmon start --capture --comp $components --pkt-size 0 --file-name (Join-Path $out 'physical.etl') | Out-Null
+ if($LASTEXITCODE){throw 'NIC capture failed'};$capture=$true
+ Invoke-WebRequest 'https://www.wintun.net/' -TimeoutSec 30 -OutFile (Join-Path $out 'capture-baseline.html')
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
- $guestWriter.WriteLine('latency-clear');AwaitGuest '^LAB_LATENCY_CLEAR$'
  Find-NetRoute -RemoteIPAddress 10.232.0.1 | Format-List | Out-String | Set-Content (Join-Path $out 'selected-route.log')
  $client.Send(4);Start-Sleep -Seconds 4;$client.Status() | Set-Content (Join-Path $out 'initial-dns-status.log')
  python "$PSScriptRoot/ip-lab-services.py" check | Set-Content (Join-Path $out 'measurements.json')

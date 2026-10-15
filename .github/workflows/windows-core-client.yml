@@ -38,6 +38,7 @@ jobs:
       - run: go test -race -count=1 ./...
       - run: go vet ./...
       - run: go build -trimpath -ldflags="-s -w" -o dist/connect-desktop-core.exe ./cmd/connect-desktop-core
+      - run: go build -o build/native-packet-perf.exe ./scripts/native-packet-perf
       - run: cmake -S apps/windows-core-client -B build/desktop -A x64
       - run: cmake --build build/desktop --config Release
       - name: Measure real Windows packet pipe before/after
