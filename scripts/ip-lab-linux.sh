@@ -4,7 +4,7 @@ set -euo pipefail
 [[ $(uname -s) == Linux && $EUID == 0 ]] || { echo 'Requires root in a disposable Linux CI runner/VM'; exit 1; }
 if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
   [[ ${GITHUB_ACTIONS:-} == true && ${CONNECT_DISPOSABLE_PERF:-} == 1 ]] || { echo 'Performance shaping is restricted to disposable CI'; exit 1; }
-  command -v tc >/dev/null; command -v iperf3 >/dev/null
+  command -v tc >/dev/null; command -v iperf3 >/dev/null; command -v ping >/dev/null
 fi
 for cmd in ip python3 tcpdump sysctl; do command -v "$cmd" >/dev/null; done
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -136,6 +136,7 @@ for f in sorted(p.glob('*-*-*.json')):
     d=json.loads(f.read_text());mode,delay,direction=f.stem.split('-')
     rtts=[v['sender']['mean_rtt']/1000 for v in d['end'].get('streams',[]) if v.get('sender',{}).get('mean_rtt') is not None]
     latencies=[float(v) for v in re.findall(r'time=([0-9.]+) ms',(p/(f.stem+'.ping')).read_text())]
+    if len(latencies)<10: raise RuntimeError('Insufficient real latency samples: '+f.stem)
     rows.append(dict(loaded_ping_ms={'samples':len(latencies),'median':statistics.median(latencies) if latencies else None,'p95':sorted(latencies)[min(len(latencies)-1,int(len(latencies)*.95))] if latencies else None,'max':max(latencies) if latencies else None},mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),tcp_rtt_ms=statistics.median(rtts) if rtts else None,cpu=d['end'].get('cpu_utilization_percent')))
 out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','rate_mbit':int(sys.argv[2]),'streams':4,'results':rows}
 (p/'throughput-summary.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
