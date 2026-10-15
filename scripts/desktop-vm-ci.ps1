@@ -124,6 +124,7 @@ try{
    $serverCpu=$componentServer.TotalProcessorTime.TotalMilliseconds;$workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
    $clock=[Diagnostics.Stopwatch]::StartNew();$env:CONNECT_DISPOSABLE_NATIVE_PERF='1'
    try {
+    & $componentBinary probe | Set-Content (Join-Path $out ($entry.name+'-pre-load.log'));if($LASTEXITCODE){throw 'Component forwarding failed before load'}
     & $componentBinary measure | Set-Content (Join-Path $out ($entry.name+'-component-measurements.json'));if($LASTEXITCODE){throw 'Windows packet component measurement failed'}
     & $componentBinary probe | Set-Content (Join-Path $out ($entry.name+'-post-load.log'));if($LASTEXITCODE){throw 'Data did not recover after component load'}
    } finally {Remove-Item Env:CONNECT_DISPOSABLE_NATIVE_PERF -ErrorAction SilentlyContinue}

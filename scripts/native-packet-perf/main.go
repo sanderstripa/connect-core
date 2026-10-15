@@ -41,6 +41,10 @@ func (d *reflector) Write(p []byte) (int, error) {
 	if len(p) < 28 || p[9] != 17 || binary.BigEndian.Uint16(p[22:24]) != 19082 {
 		return len(p), nil
 	}
+	probe := len(p) >= 36 && bytes.Equal(p[28:36], []byte("CCPROBE1"))
+	if probe {
+		fmt.Fprintln(os.Stderr, "COMPONENT_PROBE_RECEIVED")
+	}
 	response := append([]byte(nil), p...)
 	copy(response[12:16], p[16:20])
 	copy(response[16:20], p[12:16])
@@ -61,7 +65,13 @@ func (d *reflector) Write(p []byte) (int, error) {
 	binary.BigEndian.PutUint16(response[10:12], ^uint16(sum))
 	select {
 	case d.packets <- response:
+		if probe {
+			fmt.Fprintln(os.Stderr, "COMPONENT_PROBE_REPLY_QUEUED")
+		}
 	default:
+		if probe {
+			fmt.Fprintln(os.Stderr, "COMPONENT_PROBE_REPLY_DROPPED_FULL")
+		}
 	}
 	return len(p), nil
 }
@@ -164,7 +174,7 @@ func probe() error {
 	}
 	defer c.Close()
 	p := make([]byte, 1000)
-	copy(p, "CCPERFv1")
+	copy(p, "CCPROBE1")
 	response := make([]byte, 1100)
 	start := time.Now()
 	// UDP may drop a single packet after overload. Require actual forwarding
