@@ -140,7 +140,8 @@ try {
         # A lab service must not become reachable via a physical/default route
         # after the TUN disappears. Inventory every existing alternate adapter.
         $connected=@(Get-NetIPInterface | Where-Object ConnectionState -eq 'Connected')
-        $visible=@(Get-NetAdapter | Where-Object {$_.ifIndex -in $connected.InterfaceIndex})
+        . "$PSScriptRoot/lab-adapter-inventory.ps1"
+        $visible=@(Resolve-ConnectedLabAdapters @(Get-NetAdapter) $connected)
         $unknown=@($connected | Where-Object {$_.InterfaceAlias -notin $visible.Name -and $_.InterfaceAlias -notlike '*Loopback*'})
         if($unknown.Count){throw 'Connected hidden interface cannot be guarded by this lab helper'}
         $others=@($visible | Where-Object {$_.InterfaceGuid -ne $adapter.InterfaceGuid -and $_.Name -notlike '*Loopback*'} | Select-Object -ExpandProperty Name)
