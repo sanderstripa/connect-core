@@ -157,6 +157,30 @@ func measure() error {
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{"scope": "Windows Wintun/helper/QUIC + memory UDP reflector, no Linux TUN or Internet", "streams": 4, "payload_bytes": 1000, "seconds_including_drain": elapsed, "sent_packets": sent.Load(), "received_packets": received.Load(), "goodput_mbps_per_direction": float64(received.Load()) * 1000 * 8 / elapsed / 1e6, "invalid_packets": invalid.Load()})
 }
 
+func probe() error {
+	c, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(10, 232, 0, 1), Port: 19082})
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	p := make([]byte, 1000)
+	copy(p, "CCPERFv1")
+	if _, err = c.Write(p); err != nil {
+		return err
+	}
+	response := make([]byte, 1100)
+	n, err := c.Read(response)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(p, response[:n]) {
+		return errors.New("post-load probe corrupted")
+	}
+	fmt.Println("NATIVE_POST_LOAD_FORWARDING_PASSED")
+	return nil
+}
+
 func main() {
 	if runtime.GOOS != "windows" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("CONNECT_DISPOSABLE_NATIVE_PERF") != "1" {
 		fmt.Fprintln(os.Stderr, "Disposable Windows CI only")
@@ -167,6 +191,8 @@ func main() {
 		err = server(os.Args[2])
 	} else if len(os.Args) == 2 && os.Args[1] == "measure" {
 		err = measure()
+	} else if len(os.Args) == 2 && os.Args[1] == "probe" {
+		err = probe()
 	} else {
 		err = errors.New("expected server CONFIG or measure")
 	}

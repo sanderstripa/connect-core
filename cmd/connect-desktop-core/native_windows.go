@@ -212,19 +212,25 @@ func (b *nativeBridge) read() {
 			fmt.Fprintf(os.Stderr, "CONNECT helper channel ended: requested=%t type=%T eof=%t\n", b.intentionalStop.Load(), e, errors.Is(e, io.EOF))
 			return
 		}
-		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56) {
+		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56 || len(p) == 72) {
 			if len(p) >= 32 {
 				b.stats.Dropped.Add(binary.LittleEndian.Uint64(p[24:]))
 				b.stats.RingDrops.Add(binary.LittleEndian.Uint64(p[24:]))
 				fmt.Fprintf(os.Stderr, "CONNECT Wintun ring drops: packets=%d\n", binary.LittleEndian.Uint64(p[24:]))
 			}
-			if len(p) == 56 {
+			if len(p) >= 56 {
 				count := binary.LittleEndian.Uint64(p[48:])
 				var average uint64
 				if count > 0 {
 					average = binary.LittleEndian.Uint64(p[32:]) / count / 1000
 				}
 				fmt.Fprintf(os.Stderr, "CONNECT helper pipe: sampled_packets=%d sample_every=64 average_us=%d max_us=%d\n", count, average, binary.LittleEndian.Uint64(p[40:])/1000)
+			}
+			if len(p) == 72 {
+				short, oversized := binary.LittleEndian.Uint64(p[56:]), binary.LittleEndian.Uint64(p[64:])
+				b.stats.InvalidTunDrops.Add(short + oversized)
+				b.stats.Dropped.Add(short + oversized)
+				fmt.Fprintf(os.Stderr, "CONNECT Wintun packet rejection: short=%d oversized=%d\n", short, oversized)
 			}
 			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
 			continue
@@ -239,9 +245,16 @@ func (b *nativeBridge) read() {
 			}
 			continue
 		}
-		if kind != desktop.FromTUN || len(p) > ipvpn.MTU || len(p) < 20 {
+		if kind != desktop.FromTUN {
 			fmt.Fprintf(os.Stderr, "CONNECT helper channel rejected: kind=%d length=%d\n", kind, len(p))
 			return
+		}
+		// An invalid OS packet is not an invalid IPC command. In particular, a
+		// zero-sized Wintun packet must not tear down an authenticated session.
+		if len(p) < 20 || len(p) > ipvpn.MTU {
+			b.stats.InvalidTunDrops.Add(1)
+			b.stats.Dropped.Add(1)
+			continue
 		}
 		b.mu.Lock()
 		if b.active != nil {

@@ -123,7 +123,10 @@ try{
    $componentServer.Refresh();$client.Process.Refresh();$helper=[Diagnostics.Process]::GetProcessById($client.Helper);$helper.Refresh()
    $serverCpu=$componentServer.TotalProcessorTime.TotalMilliseconds;$workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
    $clock=[Diagnostics.Stopwatch]::StartNew();$env:CONNECT_DISPOSABLE_NATIVE_PERF='1'
-   try {& $componentBinary measure | Set-Content (Join-Path $out ($entry.name+'-component-measurements.json'));if($LASTEXITCODE){throw 'Windows packet component measurement failed'}} finally {Remove-Item Env:CONNECT_DISPOSABLE_NATIVE_PERF -ErrorAction SilentlyContinue}
+   try {
+    & $componentBinary measure | Set-Content (Join-Path $out ($entry.name+'-component-measurements.json'));if($LASTEXITCODE){throw 'Windows packet component measurement failed'}
+    & $componentBinary probe | Set-Content (Join-Path $out ($entry.name+'-post-load.log'));if($LASTEXITCODE){throw 'Data did not recover after component load'}
+   } finally {Remove-Item Env:CONNECT_DISPOSABLE_NATIVE_PERF -ErrorAction SilentlyContinue}
    $clock.Stop();$componentServer.Refresh();$client.Process.Refresh();$helper.Refresh()
    @{scope='Windows packet component only, memory reflector, no TCG/Linux/Internet';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;reflector_cpu_ms=$componentServer.TotalProcessorTime.TotalMilliseconds-$serverCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($entry.name+'-component-cpu-measurements.json'))
    $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Component worker shutdown hung'}

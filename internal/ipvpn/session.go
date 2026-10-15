@@ -30,6 +30,7 @@ const maxQueuedPayload = 64 << 20
 type Stats struct {
 	Sent, Received, Dropped, SentBytes, ReceivedBytes               atomic.Uint64
 	PolicyDrops, QueueDrops, InactiveDrops, RingDrops               atomic.Uint64
+	InvalidTunDrops                                                 atomic.Uint64
 	NativeQueue, ReceiveQueue, SendQueue, DatagramSend, DeviceWrite Timing
 }
 
