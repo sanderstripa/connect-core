@@ -215,7 +215,7 @@ func (b *nativeBridge) read() {
 			fmt.Fprintf(os.Stderr, "CONNECT helper channel ended: requested=%t type=%T eof=%t\n", b.intentionalStop.Load(), e, errors.Is(e, io.EOF))
 			return
 		}
-		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56 || len(p) == 72) {
+		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56 || len(p) == 72 || len(p) == 80) {
 			if len(p) >= 32 {
 				b.stats.Dropped.Add(binary.LittleEndian.Uint64(p[24:]))
 				b.stats.RingDrops.Add(binary.LittleEndian.Uint64(p[24:]))
@@ -229,7 +229,13 @@ func (b *nativeBridge) read() {
 				}
 				fmt.Fprintf(os.Stderr, "CONNECT helper pipe: sampled_packets=%d sample_every=64 average_us=%d max_us=%d\n", count, average, binary.LittleEndian.Uint64(p[40:])/1000)
 			}
-			if len(p) == 72 {
+			if len(p) >= 80 {
+				dropped := binary.LittleEndian.Uint64(p[72:])
+				b.stats.QueueDrops.Add(dropped)
+				b.stats.Dropped.Add(dropped)
+				fmt.Fprintf(os.Stderr, "CONNECT helper bounded queue drops: packets=%d\n", dropped)
+			}
+			if len(p) >= 72 {
 				short, oversized := binary.LittleEndian.Uint64(p[56:]), binary.LittleEndian.Uint64(p[64:])
 				b.stats.InvalidTunDrops.Add(short + oversized)
 				b.stats.Dropped.Add(short + oversized)

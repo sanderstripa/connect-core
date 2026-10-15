@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <cstring>
 #include <chrono>
+#include <array>
+#include <condition_variable>
 #include "pipe_io.h"
 
 namespace {
@@ -34,7 +36,14 @@ HMODULE wintun=nullptr;NET_LUID luid{};GUID adapterGuid{};MIB_IPFORWARD_ROW2 end
 std::mutex outputMutex;std::atomic<bool> stopping=false;
 DWORD stage=0;std::atomic<DWORD> systemError=0;std::atomic<uint64_t> rawPackets=0,rawBytes=0,polls=0,ringDrops=0;
 std::atomic<uint64_t> pipePackets=0,pipeNanos=0,pipeMaxNanos=0;
-std::atomic<uint64_t> shortPackets=0,oversizedPackets=0;
+std::atomic<uint64_t> shortPackets=0,oversizedPackets=0,helperQueueDrops=0;
+// Drain/release the kernel ring independently of a slow private pipe reader.
+// Fixed storage, bounded drops, and no TLS keys in this privileged process.
+struct QueuedTunPacket { DWORD size=0; BYTE bytes[Mtu]{}; };
+std::array<QueuedTunPacket,4096> tunQueue;
+size_t queueHead=0,queueTail=0,queueCount=0;
+std::mutex queueMutex;
+std::condition_variable queueReady;
 HANDLE (WINAPI *createAdapter)(LPCWSTR,LPCWSTR,const GUID*);
 void (WINAPI *closeAdapter)(HANDLE);
 void (WINAPI *getLuid)(HANDLE,NET_LUID*);
@@ -172,7 +181,40 @@ void recover(){
  stage=13;
  cleanup();
 }
-void sendPackets(){HANDLE waits[]={readEvent(session),worker};while(!stopping){++polls;DWORD size=0;BYTE* p=receivePacket(session,&size);if(p){++rawPackets;rawBytes+=size;bool ok=true;if(size>=20&&size<=Mtu&&(rawPackets.load()&63)==0){auto began=std::chrono::steady_clock::now();ok=frame(FromTun,p,size);auto elapsed=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-began).count());++pipePackets;pipeNanos+=elapsed;auto previous=pipeMaxNanos.load();while(elapsed>previous&&!pipeMaxNanos.compare_exchange_weak(previous,elapsed)){} }else if(size>=20&&size<=Mtu)ok=frame(FromTun,p,size);else if(size<20)++shortPackets;else ++oversizedPackets;releasePacket(session,p);if(!ok)break;continue;}DWORD receiveError=GetLastError();if(receiveError!=ERROR_NO_MORE_ITEMS){DWORD expected=0;systemError.compare_exchange_strong(expected,receiveError);break;}DWORD event=WaitForMultipleObjects(2,waits,FALSE,250);if(event==WAIT_OBJECT_0+1)break;}if(!stopping.exchange(true)){status(4,5);CancelIoEx(pipe,nullptr);}}
+void writePackets(){
+ uint64_t forwarded=0;
+ while(!stopping){
+  QueuedTunPacket packet;
+  {std::unique_lock<std::mutex> lock(queueMutex);queueReady.wait(lock,[]{return stopping.load()||queueCount!=0;});if(stopping)break;
+   packet=tunQueue[queueHead];queueHead=(queueHead+1)%tunQueue.size();--queueCount;}
+  bool sampled=(++forwarded&63)==0;auto began=sampled?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
+  bool ok=frame(FromTun,packet.bytes,packet.size);
+  if(sampled){auto elapsed=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-began).count());++pipePackets;pipeNanos+=elapsed;auto previous=pipeMaxNanos.load();while(elapsed>previous&&!pipeMaxNanos.compare_exchange_weak(previous,elapsed)){} }
+  if(!ok){stopping=true;queueReady.notify_all();CancelIoEx(pipe,nullptr);break;}
+ }
+}
+void sendPackets(){
+ HANDLE waits[]={readEvent(session),worker};
+ while(!stopping){
+  ++polls;DWORD size=0;BYTE* p=receivePacket(session,&size);
+  if(p){
+   ++rawPackets;rawBytes+=size;
+   if(size<20)++shortPackets;
+   else if(size>Mtu)++oversizedPackets;
+   else {
+    {std::lock_guard<std::mutex> lock(queueMutex);
+     if(queueCount==tunQueue.size())++helperQueueDrops;
+     else {auto& packet=tunQueue[queueTail];packet.size=size;memcpy(packet.bytes,p,size);queueTail=(queueTail+1)%tunQueue.size();++queueCount;}}
+    queueReady.notify_one();
+   }
+   releasePacket(session,p);continue;
+  }
+  DWORD receiveError=GetLastError();
+  if(receiveError!=ERROR_NO_MORE_ITEMS){DWORD expected=0;systemError.compare_exchange_strong(expected,receiveError);break;}
+  if(WaitForMultipleObjects(2,waits,FALSE,250)==WAIT_OBJECT_0+1)break;
+ }
+ if(!stopping.exchange(true)){CancelIoEx(pipe,nullptr);queueReady.notify_all();}
+}
 void checkSponsor(DWORD pid,const std::wstring& name){
  const std::wstring prefix=L"\\\\.\\pipe\\ConnectCore-";if(!pid||name.size()!=prefix.size()+64||name.rfind(prefix,0)!=0)throw DWORD(ERROR_INVALID_PARAMETER);for(size_t i=prefix.size();i<name.size();++i)if(!((name[i]>=L'0'&&name[i]<=L'9')||(name[i]>=L'a'&&name[i]<=L'f')))throw DWORD(ERROR_INVALID_PARAMETER);
  worker=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(!worker)throw GetLastError();wchar_t path[32768];DWORD n=32768;check(QueryFullProcessImageNameW(worker,0,path,&n)?0:GetLastError());if(_wcsicmp(std::wstring(path,n).c_str(),adjacent(L"connect-desktop-core.exe").c_str()))throw DWORD(ERROR_ACCESS_DENIED);
@@ -181,7 +223,7 @@ void checkSponsor(DWORD pid,const std::wstring& name){
 }
 }
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
- if(!IsUserAnAdmin())return ERROR_ELEVATION_REQUIRED;WSADATA ws;WSAStartup(MAKEWORD(2,2),&ws);int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);std::thread sender;bool explicitStop=false;DWORD error=0;
+ if(!IsUserAnAdmin())return ERROR_ELEVATION_REQUIRED;WSADATA ws;WSAStartup(MAKEWORD(2,2),&ws);int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);std::thread sender,pipeSender;bool explicitStop=false;DWORD error=0;
  HANDLE exclusivity=nullptr;
  try{
   bool standaloneRecovery=argc==2&&std::wstring(argv[1])==L"--recover";
@@ -192,9 +234,9 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
   BYTE h[8];if(!readExact(h,8)||h[0]!='C'||h[1]!='C'||h[2]!=2)throw DWORD(ERROR_INVALID_DATA);DWORD length;memcpy(&length,h+4,4);if(h[3]==8&&length==0){recover();status(1);if(argv)LocalFree(argv);CloseHandle(pipe);CloseHandle(worker);FwpmEngineClose0(engine);ReleaseMutex(exclusivity);CloseHandle(exclusivity);return 0;}if(h[3]!=Configure)throw DWORD(ERROR_INVALID_DATA);
   FWPM_SUBLAYER0* existing=nullptr;DWORD present=FwpmSubLayerGetByKey0(engine,&Sublayer,&existing);if(present==ERROR_SUCCESS){FwpmFreeMemory0(reinterpret_cast<void**>(&existing));throw DWORD(ERROR_ALREADY_EXISTS);}if(present!=FWP_E_SUBLAYER_NOT_FOUND)throw present;
   Plan p{};if(length!=sizeof(p)||!readExact(&p,sizeof(p)))throw DWORD(ERROR_INVALID_DATA);validate(p);stage=1;trustedDLL();
-  stage=2;wchar_t* end=nullptr;DWORD pid=wcstoul(argv[2],&end,10);std::wstring name=L"ccvpn-"+std::to_wstring(pid);NET_LUID old{};if(ConvertInterfaceAliasToLuid(name.c_str(),&old)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);check(CoCreateGuid(&adapterGuid));adapter=createAdapter(name.c_str(),L"CONNECT CORE",&adapterGuid);if(!adapter)throw GetLastError();getLuid(adapter,&luid);check(ConvertInterfaceLuidToGuid(&luid,&adapterGuid));session=startSession(adapter,0x400000);if(!session)throw GetLastError();stage=3;checkpoint();stage=4;prepareEndpoint(p);stage=5;installGuard(p);configure(p);stage=9;status(3);sender=std::thread(sendPackets);
+  stage=2;wchar_t* end=nullptr;DWORD pid=wcstoul(argv[2],&end,10);std::wstring name=L"ccvpn-"+std::to_wstring(pid);NET_LUID old{};if(ConvertInterfaceAliasToLuid(name.c_str(),&old)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);check(CoCreateGuid(&adapterGuid));adapter=createAdapter(name.c_str(),L"CONNECT CORE",&adapterGuid);if(!adapter)throw GetLastError();getLuid(adapter,&luid);check(ConvertInterfaceLuidToGuid(&luid,&adapterGuid));session=startSession(adapter,0x400000);if(!session)throw GetLastError();stage=3;checkpoint();stage=4;prepareEndpoint(p);stage=5;installGuard(p);configure(p);stage=9;status(3);pipeSender=std::thread(writePackets);sender=std::thread(sendPackets);
   while(!stopping){if(!readExact(h,8))break;if(h[0]!='C'||h[1]!='C'||h[2]!=2)throw DWORD(ERROR_INVALID_DATA);memcpy(&length,h+4,4);if(h[3]==Exit&&length==0){explicitStop=true;break;}if(h[3]!=ToTun||length<20||length>Mtu)throw DWORD(ERROR_INVALID_DATA);BYTE bytes[Mtu];if(!readExact(bytes,length))break;BYTE* packet=allocatePacket(session,length);if(!packet){DWORD e=GetLastError();if(e==ERROR_BUFFER_OVERFLOW){++ringDrops;continue;}throw e;}memcpy(packet,bytes,length);sendPacket(session,packet);}
-  stopping=true;if(sender.joinable())sender.join();if(explicitStop){uint64_t counters[9]={rawPackets.load(),rawBytes.load(),polls.load(),ringDrops.load(),pipeNanos.load(),pipeMaxNanos.load(),pipePackets.load(),shortPackets.load(),oversizedPackets.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
- }catch(DWORD e){error=e;systemError=e;stopping=true;if(sender.joinable())sender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
+  stopping=true;queueReady.notify_all();if(sender.joinable())sender.join();if(pipeSender.joinable())pipeSender.join();if(explicitStop){uint64_t counters[10]={rawPackets.load(),rawBytes.load(),polls.load(),ringDrops.load(),pipeNanos.load(),pipeMaxNanos.load(),pipePackets.load(),shortPackets.load(),oversizedPackets.load(),helperQueueDrops.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
+ }catch(DWORD e){error=e;systemError=e;stopping=true;queueReady.notify_all();if(sender.joinable())sender.join();if(pipeSender.joinable())pipeSender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
  closeTun();if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(permitEngine)FwpmEngineClose0(permitEngine);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
 }
