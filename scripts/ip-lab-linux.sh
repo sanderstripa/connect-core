@@ -96,24 +96,38 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
   ip netns exec "$edge" iperf3 -s -B 192.168.231.1 -p 18084 >"$artifacts/iperf-direct.log" 2>&1 & pids+=("$!")
   ip netns exec "$service" iperf3 -s -B 10.232.0.1 -p 18084 >"$artifacts/iperf-vpn.log" 2>&1 & pids+=("$!")
   sleep 1
+  restart_perf_client() {
+    kill -INT "$clientpid"; wait "$clientpid" || true
+    sleep 0.3
+    ip netns exec "$client" "$bin" ip-client "$lab/credentials/ip-client.json" >>"$artifacts/client.log" 2>&1 &
+    clientpid=$!; pids+=("$clientpid")
+    wait_interface "$client"
+    ip -n "$client" addr add 10.231.0.2/32 dev ccip0
+    ip -n "$client" link set ccip0 up
+    ip -n "$client" route add 10.232.0.1/32 dev ccip0 src 10.231.0.2
+  }
   for latency in 0 40; do
     ip netns exec "$client" tc qdisc replace dev cw root netem delay "${latency}ms" limit 20000
     ip netns exec "$edge" tc qdisc replace dev ew root netem delay "${latency}ms" limit 20000
     for route in direct vpn; do
       target=192.168.231.1; [[ $route != vpn ]] || target=10.232.0.1
       for direction in upload download; do
+        # Establish at the measured RTT, not at 0 ms followed by a route jump.
+        # Every direction starts a new authenticated QUIC session.
+        if [[ $route == vpn ]]; then restart_perf_client; fi
         options=(); [[ $direction != download ]] || options+=(-R)
         ip netns exec "$client" timeout 30 iperf3 -4 -c "$target" -p 18084 -P 4 -t 5 -O 1 --connect-timeout 10000 -J "${options[@]}" >"$artifacts/${route}-${latency}-${direction}.json"
       done
     done
   done
   python3 - "$artifacts" <<'PY'
-import json,pathlib,sys
+import json,pathlib,sys,statistics
 p=pathlib.Path(sys.argv[1]);rows=[]
 for f in sorted(p.glob('*-*-*.json')):
     if not f.stem.startswith(('direct-','vpn-')): continue
     d=json.loads(f.read_text());mode,delay,direction=f.stem.split('-')
-    rows.append(dict(mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),cpu=d['end'].get('cpu_utilization_percent')))
+    rtts=[v['sender']['mean_rtt']/1000 for v in d['end'].get('streams',[]) if v.get('sender',{}).get('mean_rtt') is not None]
+    rows.append(dict(mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),tcp_rtt_ms=statistics.median(rtts) if rtts else None,cpu=d['end'].get('cpu_utilization_percent')))
 out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','streams':4,'results':rows}
 (p/'throughput-summary.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
 PY

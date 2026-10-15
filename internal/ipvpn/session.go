@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,6 +100,10 @@ func monitor(c *quic.Conn, s *quic.Stream) {
 }
 
 func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats) error {
+	defer func() {
+		s := c.ConnectionStats()
+		fmt.Fprintf(os.Stderr, "CONNECT transport stats: rtt_ms=%d sent_packets=%d received_packets=%d lost_packets=%d device_dropped=%d\n", s.SmoothedRTT.Milliseconds(), s.PacketsSent, s.PacketsReceived, s.PacketsLost, stats.Dropped.Load())
+	}()
 	defer c.CloseWithError(0, "client stopped")
 	stop := context.AfterFunc(ctx, func() { _ = c.CloseWithError(0, "cancelled"); _ = d.Close() })
 	defer stop()
