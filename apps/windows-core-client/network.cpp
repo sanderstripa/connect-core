@@ -44,6 +44,10 @@ std::array<QueuedTunPacket,4096> tunQueue;
 size_t queueHead=0,queueTail=0,queueCount=0;
 std::mutex queueMutex;
 std::condition_variable queueReady;
+void stopPacketQueue(){
+ {std::lock_guard<std::mutex> lock(queueMutex);stopping=true;}
+ queueReady.notify_all();
+}
 HANDLE (WINAPI *createAdapter)(LPCWSTR,LPCWSTR,const GUID*);
 void (WINAPI *closeAdapter)(HANDLE);
 void (WINAPI *getLuid)(HANDLE,NET_LUID*);
@@ -190,7 +194,7 @@ void writePackets(){
   bool sampled=(++forwarded&63)==0;auto began=sampled?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
   bool ok=frame(FromTun,packet.bytes,packet.size);
   if(sampled){auto elapsed=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-began).count());++pipePackets;pipeNanos+=elapsed;auto previous=pipeMaxNanos.load();while(elapsed>previous&&!pipeMaxNanos.compare_exchange_weak(previous,elapsed)){} }
-  if(!ok){stopping=true;queueReady.notify_all();CancelIoEx(pipe,nullptr);break;}
+  if(!ok){stopPacketQueue();CancelIoEx(pipe,nullptr);break;}
  }
 }
 void sendPackets(){
@@ -213,7 +217,17 @@ void sendPackets(){
   if(receiveError!=ERROR_NO_MORE_ITEMS){DWORD expected=0;systemError.compare_exchange_strong(expected,receiveError);break;}
   if(WaitForMultipleObjects(2,waits,FALSE,250)==WAIT_OBJECT_0+1)break;
  }
- if(!stopping.exchange(true)){CancelIoEx(pipe,nullptr);queueReady.notify_all();}
+ stopPacketQueue();CancelIoEx(pipe,nullptr);
+}
+void joinPacketWorkers(std::thread& sender,std::thread& writer){
+ stopPacketQueue();
+ if(sender.joinable())sender.join();
+ if(writer.joinable()){
+  // Repeat cancellation to cover a writer that was scheduled just after the
+  // first cancel. No new packet can be dequeued after stopPacketQueue.
+  while(WaitForSingleObject(writer.native_handle(),50)==WAIT_TIMEOUT)CancelIoEx(pipe,nullptr);
+  writer.join();
+ }
 }
 void checkSponsor(DWORD pid,const std::wstring& name){
  const std::wstring prefix=L"\\\\.\\pipe\\ConnectCore-";if(!pid||name.size()!=prefix.size()+64||name.rfind(prefix,0)!=0)throw DWORD(ERROR_INVALID_PARAMETER);for(size_t i=prefix.size();i<name.size();++i)if(!((name[i]>=L'0'&&name[i]<=L'9')||(name[i]>=L'a'&&name[i]<=L'f')))throw DWORD(ERROR_INVALID_PARAMETER);
@@ -236,7 +250,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
   Plan p{};if(length!=sizeof(p)||!readExact(&p,sizeof(p)))throw DWORD(ERROR_INVALID_DATA);validate(p);stage=1;trustedDLL();
   stage=2;wchar_t* end=nullptr;DWORD pid=wcstoul(argv[2],&end,10);std::wstring name=L"ccvpn-"+std::to_wstring(pid);NET_LUID old{};if(ConvertInterfaceAliasToLuid(name.c_str(),&old)==ERROR_SUCCESS)throw DWORD(ERROR_ALREADY_EXISTS);check(CoCreateGuid(&adapterGuid));adapter=createAdapter(name.c_str(),L"CONNECT CORE",&adapterGuid);if(!adapter)throw GetLastError();getLuid(adapter,&luid);check(ConvertInterfaceLuidToGuid(&luid,&adapterGuid));session=startSession(adapter,0x400000);if(!session)throw GetLastError();stage=3;checkpoint();stage=4;prepareEndpoint(p);stage=5;installGuard(p);configure(p);stage=9;status(3);pipeSender=std::thread(writePackets);sender=std::thread(sendPackets);
   while(!stopping){if(!readExact(h,8))break;if(h[0]!='C'||h[1]!='C'||h[2]!=2)throw DWORD(ERROR_INVALID_DATA);memcpy(&length,h+4,4);if(h[3]==Exit&&length==0){explicitStop=true;break;}if(h[3]!=ToTun||length<20||length>Mtu)throw DWORD(ERROR_INVALID_DATA);BYTE bytes[Mtu];if(!readExact(bytes,length))break;BYTE* packet=allocatePacket(session,length);if(!packet){DWORD e=GetLastError();if(e==ERROR_BUFFER_OVERFLOW){++ringDrops;continue;}throw e;}memcpy(packet,bytes,length);sendPacket(session,packet);}
-  stopping=true;queueReady.notify_all();if(sender.joinable())sender.join();if(pipeSender.joinable())pipeSender.join();if(explicitStop){uint64_t counters[10]={rawPackets.load(),rawBytes.load(),polls.load(),ringDrops.load(),pipeNanos.load(),pipeMaxNanos.load(),pipePackets.load(),shortPackets.load(),oversizedPackets.load(),helperQueueDrops.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
- }catch(DWORD e){error=e;systemError=e;stopping=true;CancelIoEx(pipe,nullptr);queueReady.notify_all();if(sender.joinable())sender.join();if(pipeSender.joinable())pipeSender.join();if(guard){status(4,5);}else{closeTun();status(4,5);}}
+  joinPacketWorkers(sender,pipeSender);if(explicitStop){uint64_t counters[10]={rawPackets.load(),rawBytes.load(),polls.load(),ringDrops.load(),pipeNanos.load(),pipeMaxNanos.load(),pipePackets.load(),shortPackets.load(),oversizedPackets.load(),helperQueueDrops.load()};frame(35,counters,sizeof(counters));cleanup();status(1);} // EOF/crash intentionally retains persistent protection.
+ }catch(DWORD e){error=e;systemError=e;stopPacketQueue();CancelIoEx(pipe,nullptr);joinPacketWorkers(sender,pipeSender);if(guard){status(4,5);}else{closeTun();status(4,5);}}
  closeTun();if(worker)CloseHandle(worker);if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(permitEngine)FwpmEngineClose0(permitEngine);if(engine)FwpmEngineClose0(engine);if(wintun)FreeLibrary(wintun);if(argv)LocalFree(argv);if(exclusivity){ReleaseMutex(exclusivity);CloseHandle(exclusivity);}WSACleanup();return static_cast<int>(error);
 }
