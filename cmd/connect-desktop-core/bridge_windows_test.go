@@ -82,3 +82,25 @@ func TestNativeBridgeInvalidPacketDoesNotEndSession(t *testing.T) {
 		t.Fatal("closed pipe did not unblock bridge")
 	}
 }
+
+func TestNativeBridgeUnknownCommandStillClosesChannel(t *testing.T) {
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	b := &nativeBridge{conn: reader, done: make(chan struct{}), ack: make(chan uint32, 1), stats: &ipvpn.Stats{}}
+	go b.read()
+	sent := make(chan error, 1)
+	go func() { sent <- desktop.Write(writer, 255, nil) }()
+	select {
+	case <-b.done:
+	case <-time.After(time.Second):
+		t.Fatal("unknown command accepted")
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	writer.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := writer.Write([]byte("must not block helper forever")); err == nil {
+		t.Fatal("rejected channel remained open")
+	}
+}

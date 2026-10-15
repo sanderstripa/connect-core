@@ -206,6 +206,9 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 }
 func (b *nativeBridge) read() {
 	defer close(b.done)
+	// A rejected control frame must also unblock the helper's pending writes.
+	// Closing this private IPC never removes the helper's persistent deny guard.
+	defer b.conn.Close()
 	for {
 		kind, p, e := desktop.Read(b.conn)
 		if e != nil {
