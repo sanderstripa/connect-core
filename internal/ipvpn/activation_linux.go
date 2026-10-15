@@ -28,6 +28,7 @@ func activatedPacketConn(address string) (net.PacketConn, error) {
 			return
 		}
 		activation.file = os.NewFile(3, "connect-data-activation")
+		syscall.CloseOnExec(3)
 		if activation.file == nil {
 			activation.err = errors.New("activation socket unavailable")
 		}
