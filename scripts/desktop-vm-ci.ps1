@@ -117,10 +117,12 @@ try{
   $ready=$componentServer.StandardOutput.ReadLineAsync()
   if(!$ready.Wait(10000) -or $ready.GetAwaiter().GetResult() -ne 'NATIVE_PACKET_REFLECTOR_READY'){throw 'Component reflector unavailable'}
   foreach($entry in @(@{name='candidate';exe=(Join-Path $dist 'connect-desktop-core.exe')},@{name='released-025';exe=(Join-Path $root 'build/native-baseline/connect-desktop-core.exe')})) {
+   $comparisonHelper=$null;$comparisonHelperStarted=0
    try {
    $client=[CorePipe]::new($entry.exe,(Join-Path $out 'private-profile'))
    $client.Send(1,$componentProfile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
    $componentServer.Refresh();$client.Process.Refresh();$helper=[Diagnostics.Process]::GetProcessById($client.Helper);$helper.Refresh()
+   $comparisonHelper=$helper;$comparisonHelperStarted=$helper.StartTime.ToUniversalTime().Ticks
    $serverCpu=$componentServer.TotalProcessorTime.TotalMilliseconds;$workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
    $clock=[Diagnostics.Stopwatch]::StartNew();$env:CONNECT_DISPOSABLE_NATIVE_PERF='1'
    try {
@@ -140,12 +142,13 @@ try{
     @{scope='released 0.2.5 comparison failed under new UDP overload';status=$client.Status();measurement_valid=$false} | ConvertTo-Json | Set-Content (Join-Path $out 'released-025-component-failure-measurements.json')
     if(!$client.Process.HasExited){$client.Process.Kill();$client.Process.WaitForExit()}
     $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-025-component-stage-measurements.log')
-    if($client.Helper){
-     $legacyHelper=$null
-     try {$legacyHelper=[Diagnostics.Process]::GetProcessById($client.Helper)} catch [ArgumentException] {}
+    # Failed Core status can reset Helper to zero while its guarded helper is
+    # still alive. Retain the exact pre-load process, never the mutable status.
+    if($comparisonHelper){
+     $legacyHelper=$comparisonHelper
      if($legacyHelper -and !$legacyHelper.HasExited){
       $expectedLegacyHelper=(Resolve-Path (Join-Path $root 'build/native-baseline/ConnectCoreNetwork.exe')).Path
-      if($legacyHelper.MainModule.FileName -ne $expectedLegacyHelper){throw 'Legacy helper identity changed'}
+      if($legacyHelper.MainModule.FileName -ne $expectedLegacyHelper -or $legacyHelper.StartTime.ToUniversalTime().Ticks -ne $comparisonHelperStarted){throw 'Legacy helper identity changed'}
       $legacyHelper.Kill();$legacyHelper.WaitForExit()
      }
     }
