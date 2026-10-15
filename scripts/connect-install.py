@@ -550,7 +550,7 @@ def update(args, m, revision, release):
             raise RuntimeError('Unrecognized persisted-state compatibility contract')
     except BaseException:
         shutil.rmtree(target); raise
-    try: migration=prepare_socket_migration(m)
+    try: migration=prepare_socket_migration(m) if tuple(map(int,target_version.split('.'))) >= (0,2,5) else None
     except BaseException: shutil.rmtree(target);raise
     for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name)
     try:

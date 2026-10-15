@@ -134,15 +134,29 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         # Health failure during an update restores the exact previous binaries,
         # without restoring a state backup that could undo the revocation.
         manifest=json.loads((installer.JOURNAL/'manifest.json').read_text());old=(installer.ROOT/'current').resolve()
+        # Reproduce the installed 0.2.4 service layout: no activation socket and
+        # an unprivileged Core binding UDP itself. State/credentials stay intact.
+        for name in ['connect-ui.service','connect-core.service','connect-core.socket']:
+            run('systemctl','stop',name)
+        run('systemctl','disable','connect-core.socket')
+        (installer.UNITS/'connect-core.socket').unlink()
+        (installer.UNITS/'connect-core.service').write_text(installer.unit_files()['connect-core.service'])
+        manifest['unit_hashes'].pop('connect-core.socket');manifest['unit_hashes']['connect-core.service']=installer.sha(installer.UNITS/'connect-core.service')
+        manifest.pop('socket_activation');installer.save(installer.JOURNAL/'manifest.json',manifest)
+        run('systemctl','daemon-reload')
+        for name in ['connect-core.service','connect-ui.service']: installer.start_owned(name)
+        installer.health(manifest)
         release=stage/'broken-release';shutil.copytree(old,release);(release/'bin'/'connect-ui').write_text('#!/bin/sh\nexit 71\n');(release/'bin'/'connect-ui').chmod(0o755)
         try: installer.update(None,manifest,'f'*40,release)
         except RuntimeError: pass
         else: raise AssertionError('broken update falsely succeeded')
         assert (installer.ROOT/'current').resolve()==old, 'binary rollback failed'
+        assert not (installer.UNITS/'connect-core.socket').exists(), 'failed migration left an activation unit'
         csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
         assert api('/api/status')['devices'][0]['access']=='revoked', 'rollback resurrected revoked credential'
         # Successful update path, then the explicit previous-version rollback.
         release=stage/'good-release';shutil.copytree(old,release);installer.update(None,manifest,'e'*40,release)
+        assert manifest.get('socket_activation') and run('systemctl','is-active','connect-core.socket').stdout.strip()=='active', 'legacy installation did not migrate'
         assert manifest['previous_revision']==old.name
         run(sys.executable,str(installer.ROOT/'current'/'scripts'/'connect-install.py'),'rollback')
         csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
