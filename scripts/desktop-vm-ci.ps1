@@ -105,7 +105,9 @@ try{
  $componentCfg.endpoint='127.0.0.1:17446'
  $componentProfile=Join-Path $out 'private-component-client.json';$componentCfg | ConvertTo-Json -Depth 10 | Set-Content $componentProfile -Encoding utf8NoBOM
  $componentBinary=Join-Path $root 'build/native-packet-perf.exe'
- $componentInfo=[Diagnostics.ProcessStartInfo]::new($componentBinary)
+ # Both clients use the unchanged 0.2.5 protocol backend here, so a client-only
+ # upgrade is checked without asking the user to revisit the VPS first.
+ $componentInfo=[Diagnostics.ProcessStartInfo]::new((Join-Path $root 'build/native-packet-perf-025.exe'))
  $componentInfo.UseShellExecute=$false;$componentInfo.CreateNoWindow=$true
  $componentInfo.RedirectStandardInput=$true;$componentInfo.RedirectStandardOutput=$true;$componentInfo.RedirectStandardError=$true
  $componentInfo.Environment['CONNECT_DISPOSABLE_NATIVE_PERF']='1'
