@@ -104,13 +104,17 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 		s := c.ConnectionStats()
 		fmt.Fprintf(os.Stderr, "CONNECT transport stats: rtt_ms=%d sent_packets=%d received_packets=%d lost_packets=%d device_dropped=%d\n", s.SmoothedRTT.Milliseconds(), s.PacketsSent, s.PacketsReceived, s.PacketsLost, stats.Dropped.Load())
 	}()
+	parent := ctx
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	defer c.CloseWithError(0, "client stopped")
 	stop := context.AfterFunc(ctx, func() { _ = c.CloseWithError(0, "cancelled"); _ = d.Close() })
 	defer stop()
 	stopConn := context.AfterFunc(c.Context(), func() { _ = d.Close() })
 	defer stopConn()
 	defer d.Close()
-	result := make(chan error, 2)
+	result := make(chan error, 3)
+	incoming := make(chan []byte, PacketQueueSize)
 	go func() {
 		buf := make([]byte, 65535)
 		for {
@@ -132,44 +136,77 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 			stats.SentBytes.Add(uint64(len(pkt)))
 		}
 	}()
+	go func() { result <- receiveToQueue(ctx, c, p, stats, incoming, nil, false) }()
 	go func() {
 		for {
-			pkt, e := c.ReceiveDatagram(ctx)
-			if e != nil {
-				result <- e
+			select {
+			case <-ctx.Done():
+				result <- ctx.Err()
 				return
-			}
-			if !p.Allows(pkt, false) {
-				stats.Dropped.Add(1)
-				continue
-			}
-			n, e := d.Write(pkt)
-			if e != nil {
-				result <- e
+			case <-c.Context().Done():
+				result <- context.Cause(c.Context())
 				return
+			case pkt := <-incoming:
+				n, e := d.Write(pkt)
+				if e != nil {
+					result <- e
+					return
+				}
+				if n != len(pkt) {
+					result <- io.ErrShortWrite
+					return
+				}
+				stats.Received.Add(1)
+				stats.ReceivedBytes.Add(uint64(len(pkt)))
 			}
-			if n != len(pkt) {
-				result <- io.ErrShortWrite
-				return
-			}
-			stats.Received.Add(1)
-			stats.ReceivedBytes.Add(uint64(len(pkt)))
 		}
 	}()
 	e := <-result
 	_ = c.CloseWithError(0, "packet pump stopped")
 	_ = d.Close()
+	cancel()
 	<-result
-	if ctx.Err() != nil {
+	<-result
+	if parent.Err() != nil {
 		return nil
 	}
 	return e
 }
 
 type peer struct {
-	conn   *quic.Conn
-	policy Policy
-	queue  chan []byte
+	conn     *quic.Conn
+	policy   Policy
+	queue    chan []byte
+	incoming chan []byte
+}
+
+// Drain QUIC's bounded DATAGRAM receive queue independently of a potentially
+// slow OS TUN write. Returned DATAGRAM slices are owned by this caller.
+func receiveToQueue(ctx context.Context, c *quic.Conn, p Policy, stats *Stats, out chan []byte, budget *atomic.Int64, incoming bool) error {
+	for {
+		packet, err := c.ReceiveDatagram(ctx)
+		if err != nil {
+			return err
+		}
+		if !p.Allows(packet, incoming) {
+			stats.Dropped.Add(1)
+			continue
+		}
+		size := int64(len(packet))
+		if budget != nil && budget.Add(size) > maxQueuedPayload {
+			budget.Add(-size)
+			stats.Dropped.Add(1)
+			continue
+		}
+		select {
+		case out <- packet:
+		default:
+			if budget != nil {
+				budget.Add(-size)
+			}
+			stats.Dropped.Add(1)
+		}
+	}
 }
 
 // Serve owns d and closes it on return. The shared TUN reader routes replies to
@@ -295,6 +332,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				return
 			}
 			p.queue = make(chan []byte, PacketQueueSize)
+			p.incoming = make(chan []byte, PacketQueueSize)
 			defer control.Release(pin)
 			mu.Lock()
 			if peers[policy.Device] != nil {
@@ -308,12 +346,15 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				mu.Lock()
 				defer mu.Unlock()
 				delete(peers, policy.Device)
-				for {
-					select {
-					case packet := <-p.queue:
-						queuedPayload.Add(-int64(len(packet)))
-					default:
-						return
+				for _, queue := range []chan []byte{p.queue, p.incoming} {
+				drain:
+					for {
+						select {
+						case packet := <-queue:
+							queuedPayload.Add(-int64(len(packet)))
+						default:
+							break drain
+						}
 					}
 				}
 			}()
@@ -324,7 +365,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			}
 			_ = s.SetDeadline(time.Time{})
 			var pumps sync.WaitGroup
-			pumps.Add(2)
+			pumps.Add(3)
 			go func() { defer pumps.Done(); monitor(c, s) }()
 			go func() {
 				defer pumps.Done()
@@ -342,33 +383,37 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					}
 				}
 			}()
-			for {
-				pkt, e := c.ReceiveDatagram(ctx)
-				if e != nil {
-					break
-				}
-				if !policy.Allows(pkt, true) {
-					stats.Dropped.Add(1)
-					continue
-				}
-				e = control.Transfer(pin, true, len(pkt), func() error {
-					writeMu.Lock()
-					defer writeMu.Unlock()
-					n, err := d.Write(pkt)
-					if err == nil && n != len(pkt) {
-						return io.ErrShortWrite
+			go func() {
+				defer pumps.Done()
+				_ = receiveToQueue(ctx, c, policy, stats, p.incoming, &queuedPayload, true)
+				_ = c.CloseWithError(0, "receive stopped")
+			}()
+			func() {
+				for {
+					select {
+					case <-c.Context().Done():
+						return
+					case pkt := <-p.incoming:
+						queuedPayload.Add(-int64(len(pkt)))
+						err := control.Transfer(pin, true, len(pkt), func() error {
+							writeMu.Lock()
+							defer writeMu.Unlock()
+							n, err := d.Write(pkt)
+							if err == nil && n != len(pkt) {
+								return io.ErrShortWrite
+							}
+							return err
+						})
+						if err != nil {
+							if _, allowed := control.Policy(pin); allowed {
+								cancel()
+							}
+							return
+						}
+						stats.Received.Add(1)
 					}
-					return err
-				})
-				if e != nil {
-					if _, allowed := control.Policy(pin); !allowed {
-						break
-					}
-					cancel()
-					break
 				}
-				stats.Received.Add(1)
-			}
+			}()
 			_ = c.CloseWithError(0, "packet pump stopped")
 			pumps.Wait()
 		}()
