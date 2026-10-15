@@ -12,9 +12,13 @@ inline bool transfer(HANDLE pipe,bool reading,void* bytes,DWORD size){
  auto p=static_cast<BYTE*>(bytes);
  while(size){
   ResetEvent(completion.event);OVERLAPPED operation{};operation.hEvent=completion.event;
-  DWORD count=0;BOOL ok=reading?ReadFile(pipe,p,size,&count,&operation):WriteFile(pipe,p,size,&count,&operation);
-  if(!ok&&GetLastError()==ERROR_IO_PENDING)ok=GetOverlappedResult(pipe,&operation,&count,TRUE);
-  if(!ok||!count)return false;p+=count;size-=count;
+  // For FILE_FLAG_OVERLAPPED, obtain the byte count from the completion result
+  // even when ReadFile/WriteFile completes immediately (Microsoft fileapi contract).
+  BOOL ok=reading?ReadFile(pipe,p,size,nullptr,&operation):WriteFile(pipe,p,size,nullptr,&operation);
+  if(!ok&&GetLastError()!=ERROR_IO_PENDING)return false;
+  DWORD count=0;
+  if(!GetOverlappedResult(pipe,&operation,&count,TRUE))return false;
+  if(!count){SetLastError(ERROR_BROKEN_PIPE);return false;}p+=count;size-=count;
  }
  return true;
 }

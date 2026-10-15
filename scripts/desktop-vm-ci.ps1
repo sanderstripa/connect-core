@@ -115,6 +115,7 @@ try{
   $ready=$componentServer.StandardOutput.ReadLineAsync()
   if(!$ready.Wait(10000) -or $ready.GetAwaiter().GetResult() -ne 'NATIVE_PACKET_REFLECTOR_READY'){throw 'Component reflector unavailable'}
   foreach($entry in @(@{name='candidate';exe=(Join-Path $dist 'connect-desktop-core.exe')},@{name='released-025';exe=(Join-Path $root 'build/native-baseline/connect-desktop-core.exe')})) {
+   try {
    $client=[CorePipe]::new($entry.exe,(Join-Path $out 'private-profile'))
    $client.Send(1,$componentProfile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
    $componentServer.Refresh();$client.Process.Refresh();$helper=[Diagnostics.Process]::GetProcessById($client.Helper);$helper.Refresh()
@@ -125,6 +126,26 @@ try{
    @{scope='Windows packet component only, memory reflector, no TCG/Linux/Internet';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;reflector_cpu_ms=$componentServer.TotalProcessorTime.TotalMilliseconds-$serverCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($entry.name+'-component-cpu-measurements.json'))
    $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Component worker shutdown hung'}
    $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($entry.name+'-component-stage-measurements.log'))
+   } catch {
+    if($entry.name -ne 'released-025'){throw}
+    # The immutable old release is a comparison, not a gate that can prevent a
+    # fixed candidate from passing a newly added overload regression scenario.
+    # Preserve its failure; never convert it into a successful speed sample.
+    @{scope='released 0.2.5 comparison failed under new UDP overload';status=$client.Status();measurement_valid=$false} | ConvertTo-Json | Set-Content (Join-Path $out 'released-025-component-failure-measurements.json')
+    if(!$client.Process.HasExited){$client.Process.Kill();$client.Process.WaitForExit()}
+    $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-025-component-stage-measurements.log')
+    if($client.Helper){
+     $legacyHelper=$null
+     try {$legacyHelper=[Diagnostics.Process]::GetProcessById($client.Helper)} catch [ArgumentException] {}
+     if($legacyHelper -and !$legacyHelper.HasExited){
+      $expectedLegacyHelper=(Resolve-Path (Join-Path $root 'build/native-baseline/ConnectCoreNetwork.exe')).Path
+      if($legacyHelper.MainModule.FileName -ne $expectedLegacyHelper){throw 'Legacy helper identity changed'}
+      $legacyHelper.Kill();$legacyHelper.WaitForExit()
+     }
+    }
+    if(!(RecoverWithDeadline)){throw 'Recovery after legacy comparison failed'}
+    Write-Warning 'Released 0.2.5 failed the additional component overload comparison; failure evidence saved.'
+   }
   }
  } finally {
   if(!$componentServer.HasExited){$componentServer.StandardInput.WriteLine('stop');$componentServer.StandardInput.Close();if(!$componentServer.WaitForExit(10000)){$componentServer.Kill();$componentServer.WaitForExit()}}

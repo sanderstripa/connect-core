@@ -21,19 +21,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type nativeBridge struct {
-	conn      net.Conn
-	mu        sync.Mutex
-	writing   sync.Mutex
-	active    *nativeView
-	done      chan struct{}
-	ack       chan uint32
-	stats     *ipvpn.Stats
-	policy    ipvpn.Policy
-	helperPID uint32
+	intentionalStop atomic.Bool
+	conn            net.Conn
+	mu              sync.Mutex
+	writing         sync.Mutex
+	active          *nativeView
+	done            chan struct{}
+	ack             chan uint32
+	stats           *ipvpn.Stats
+	policy          ipvpn.Policy
+	helperPID       uint32
 }
 type nativeView struct {
 	bridge      *nativeBridge
@@ -207,6 +209,7 @@ func (b *nativeBridge) read() {
 	for {
 		kind, p, e := desktop.Read(b.conn)
 		if e != nil {
+			fmt.Fprintf(os.Stderr, "CONNECT helper channel ended: requested=%t type=%T eof=%t\n", b.intentionalStop.Load(), e, errors.Is(e, io.EOF))
 			return
 		}
 		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56) {
@@ -227,6 +230,9 @@ func (b *nativeBridge) read() {
 			continue
 		}
 		if kind == desktop.Status && len(p) == desktop.StatusSize {
+			if binary.LittleEndian.Uint32(p) == desktop.Failed {
+				fmt.Fprintf(os.Stderr, "CONNECT helper failure: stage=%d windows_error=%d code=%d\n", binary.LittleEndian.Uint32(p[16:]), binary.LittleEndian.Uint32(p[8:]), binary.LittleEndian.Uint32(p[4:]))
+			}
 			select {
 			case b.ack <- binary.LittleEndian.Uint32(p):
 			default:
@@ -234,6 +240,7 @@ func (b *nativeBridge) read() {
 			continue
 		}
 		if kind != desktop.FromTUN || len(p) > ipvpn.MTU || len(p) < 20 {
+			fmt.Fprintf(os.Stderr, "CONNECT helper channel rejected: kind=%d length=%d\n", kind, len(p))
 			return
 		}
 		b.mu.Lock()
@@ -322,6 +329,7 @@ func (v *nativeView) Close() error {
 	return nil
 }
 func (b *nativeBridge) shutdown() error {
+	b.intentionalStop.Store(true)
 	b.writing.Lock()
 	e := desktop.Write(b.conn, desktop.Exit, nil)
 	b.writing.Unlock()
