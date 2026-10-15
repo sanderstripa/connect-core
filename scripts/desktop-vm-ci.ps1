@@ -163,6 +163,9 @@ try{
   Start-Sleep -Seconds 2
   [void][NativeConnectWindow]::PostMessage($hwnd,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
   if(!$gui.WaitForExit(10000)){throw 'Native window shutdown hung'}
+  $diagnostics=Get-Content (Join-Path $out 'private-profile/ConnectCoreLab/diagnostics.log') -Raw
+  if($diagnostics -notmatch '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' -or $diagnostics -notmatch 'CONNECT Wintun counters'){throw 'Persistent native diagnostics missing'}
+  if($diagnostics -match 'PRIVATE KEY|connect://enroll'){throw 'Native diagnostics exposed private material'}
   Write-Output 'NATIVE_WINDOW_CONNECT_TCP_UDP_DNS_STDERR_ISOLATION_PASSED'
  } finally {if(!$gui.HasExited){$gui.Kill();$gui.WaitForExit()}}
  $deadline=[DateTime]::UtcNow.AddSeconds(5);do{$remaining=@(Get-CimInstance Win32_Process -Filter "Name='ConnectCoreNetwork.exe'" | Where-Object {$_.ExecutablePath -eq $helperPath});if(!$remaining.Count){break};Start-Sleep -Milliseconds 100}while([DateTime]::UtcNow -lt $deadline)

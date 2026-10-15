@@ -21,6 +21,11 @@ type Device interface {
 	Write([]byte) (int, error)
 	Close() error
 }
+
+// PacketQueueSize bounds per-session bursts; server payload memory has a separate global cap.
+const PacketQueueSize = 4096
+const maxQueuedPayload = 64 << 20
+
 type Stats struct{ Sent, Received, Dropped, SentBytes, ReceivedBytes atomic.Uint64 }
 
 func (s *Stats) Snapshot() map[string]uint64 {
@@ -174,6 +179,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 	defer cancel()
 	var mu sync.Mutex
 	var writeMu sync.Mutex
+	var queuedPayload atomic.Int64
 	var wg sync.WaitGroup
 	peers := map[netip.Addr]*peer{}
 	pending := make(chan struct{}, 32)
@@ -213,10 +219,17 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			if p == nil || !p.policy.Allows(pkt, false) {
 				stats.Dropped.Add(1)
 			} else {
-				select {
-				case p.queue <- append([]byte(nil), pkt...):
-				default:
+				size := int64(len(pkt))
+				if queuedPayload.Add(size) > maxQueuedPayload {
+					queuedPayload.Add(-size)
 					stats.Dropped.Add(1)
+				} else {
+					select {
+					case p.queue <- append([]byte(nil), pkt...):
+					default:
+						queuedPayload.Add(-size)
+						stats.Dropped.Add(1)
+					}
 				}
 			}
 			mu.Unlock()
@@ -267,7 +280,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			if _, e = readHello(s, true); e != nil {
 				return
 			}
-			p := &peer{c, policy, make(chan []byte, 64)}
+			p := &peer{conn: c, policy: policy}
 			if !control.Admit(pin, func() { _ = c.CloseWithError(4, "access revoked") }) {
 				if control.Busy(pin) {
 					_ = c.CloseWithError(3, "device already active")
@@ -276,6 +289,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				}
 				return
 			}
+			p.queue = make(chan []byte, PacketQueueSize)
 			defer control.Release(pin)
 			mu.Lock()
 			if peers[policy.Device] != nil {
@@ -285,7 +299,19 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			}
 			peers[policy.Device] = p
 			mu.Unlock()
-			defer func() { mu.Lock(); delete(peers, policy.Device); mu.Unlock() }()
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				delete(peers, policy.Device)
+				for {
+					select {
+					case packet := <-p.queue:
+						queuedPayload.Add(-int64(len(packet)))
+					default:
+						return
+					}
+				}
+			}()
 			stopPeer := context.AfterFunc(ctx, func() { _ = c.CloseWithError(0, "cancelled") })
 			defer stopPeer()
 			if e = hello(s, policy.Device); e != nil {
@@ -302,6 +328,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					case <-c.Context().Done():
 						return
 					case pkt := <-p.queue:
+						queuedPayload.Add(-int64(len(pkt)))
 						if control.Transfer(pin, false, len(pkt), func() error { return c.SendDatagram(pkt) }) != nil {
 							_ = c.CloseWithError(1, "send failed")
 							return

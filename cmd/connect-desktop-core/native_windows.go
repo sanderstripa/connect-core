@@ -240,7 +240,7 @@ func (b *nativeBridge) read() {
 	}
 }
 func (b *nativeBridge) view() *nativeView {
-	v := &nativeView{bridge: b, packets: make(chan []byte, 64), done: make(chan struct{}), rejected: map[string]uint64{}}
+	v := &nativeView{bridge: b, packets: make(chan []byte, ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
 	b.mu.Lock()
 	b.active = v
 	b.mu.Unlock()

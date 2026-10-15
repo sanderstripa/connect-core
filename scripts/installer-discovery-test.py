@@ -22,6 +22,18 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(args.panel_port,24443)
         self.assertEqual(args.acme_port,443)
 
+    @patch.object(installer, 'check_ports')
+    @patch.object(installer, 'run')
+    def test_existing_certificate_allows_both_standard_ports_occupied(self, run, ports):
+        run.side_effect=self.run_fixture
+        def busy(values):
+            if 443 in values or 80 in values: raise RuntimeError('neighbor listener')
+        ports.side_effect=busy
+        args=self.args(panel_port=24443,tls_cert='/owned-source/cert.pem',tls_key='/owned-source/key.pem')
+        installer.prepare_install(args)
+        self.assertEqual(args.panel_port,24443)
+        self.assertIsNone(args.acme_port)
+
     def args(self, **values):
         defaults = dict(endpoint=None, uplink=None, pool=None, panel_port=None, control_port=None, enrollment_port=None)
         defaults.update(values); return argparse.Namespace(**defaults)

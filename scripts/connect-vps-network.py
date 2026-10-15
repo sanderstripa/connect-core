@@ -81,7 +81,7 @@ def apply(s, journal_path):
     if not current:
         run('ip', 'tuntap', 'add', 'dev', s['interface'], 'mode', 'tun', 'user', str(s['uid']))
         run('ip', 'link', 'set', 'dev', s['interface'], 'alias', 'connect-core:' + s['owner'])
-    run('ip', 'link', 'set', 'dev', s['interface'], 'mtu', '1100')
+    run('ip', 'link', 'set', 'dev', s['interface'], 'mtu', '1100', 'txqueuelen', '4096')
     interfaces = json.loads(run('ip', '-j', '-4', 'addr', 'show', 'dev', s['interface']).stdout)
     addresses = [address for interface in interfaces for address in interface.get('addr_info', [])]
     server = str(ipaddress.ip_network(s['pool']).network_address + 1)

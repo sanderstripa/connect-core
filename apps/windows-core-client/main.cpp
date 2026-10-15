@@ -35,6 +35,14 @@ void addLog(std::wstring s){
  HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return;
  for(const auto& line:logs){std::wstring text=line+L"\r\n";int n=WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);std::string bytes(n,'\0');WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),bytes.data(),n,nullptr,nullptr);DWORD written;WriteFile(file,bytes.data(),n,&written,nullptr);}CloseHandle(file);
 }
+void loadLogs(){
+ wchar_t root[32768];DWORD n=GetEnvironmentVariableW(L"LOCALAPPDATA",root,32768);if(!n||n>=32768)return;
+ std::wstring path=std::wstring(root,n)+L"\\ConnectCoreLab\\diagnostics.log";
+ HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return;
+ LARGE_INTEGER size{};if(!GetFileSizeEx(file,&size)||size.QuadPart<0||size.QuadPart>131072){CloseHandle(file);return;}
+ std::string bytes(static_cast<size_t>(size.QuadPart),'\0');DWORD read=0;BOOL ok=ReadFile(file,bytes.data(),static_cast<DWORD>(bytes.size()),&read,nullptr);CloseHandle(file);if(!ok)return;
+ size_t start=0;while(start<read){size_t end=bytes.find('\n',start);if(end==std::string::npos)end=read;size_t length=end-start;if(length&&bytes[start+length-1]=='\r')--length;if(length&&length<=2048){if(logs.size()==64)logs.erase(logs.begin());logs.push_back(utf8(bytes.data()+start,static_cast<int>(length)));}start=end+1;}
+}
 bool startWorker(){
  wchar_t path[32768];DWORD count=GetModuleFileNameW(nullptr,path,32768);if(!count||count==32768)return false;
  std::wstring exe(path,count);exe=exe.substr(0,exe.find_last_of(L"\\/")+1)+L"connect-desktop-core.exe";
@@ -142,7 +150,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
  DWORD value=0,size=4;if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\ConnectCoreLab",L"Dark",RRF_RT_REG_DWORD,nullptr,&value,&size)==ERROR_SUCCESS)dark=value!=0;
  WNDCLASSW c{};c.hInstance=instance;c.lpfnWndProc=wndproc;c.lpszClassName=L"ConnectCoreLabWindow";c.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassW(&c);
  window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
- if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
+ loadLogs();if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
  if(!incoming.empty())importLink(incoming);
  MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(captionFont);release(title);release(actionFont);release(writeFactory);release(factory);if(singleton)CloseHandle(singleton);CoUninitialize();return 0;
 }

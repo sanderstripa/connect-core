@@ -40,13 +40,24 @@ jobs:
       - run: sudo env CONNECT_LAB_NATIVE_TUN_TEST=1 bash scripts/tun-startup-linux.sh
       - run: sudo env CONNECT_LAB_ARTIFACTS="$PWD/ip-lab-artifacts" bash scripts/ip-lab-linux.sh
       - run: sudo env CONNECT_LAB_MANAGED=1 CONNECT_LAB_ARTIFACTS="$PWD/managed-lab-artifacts" bash scripts/ip-lab-linux.sh
-      - name: Compare direct and QUIC TCP throughput at 0 and 80 ms RTT
-        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_ARTIFACTS="$PWD/performance-lab-artifacts" bash scripts/ip-lab-linux.sh
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.2.4
+          path: baseline-source
+      - name: Build immutable 0.2.4 throughput baseline
+        working-directory: baseline-source
+        run: go build -o ../bin/connect-core-baseline ./cmd/connect-core
+      - name: Measure 0.2.4 direct and QUIC TCP throughput at 0 and 80 ms RTT
+        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_BINARY="$PWD/bin/connect-core-baseline" CONNECT_LAB_ARTIFACTS="$PWD/performance-before" bash scripts/ip-lab-linux.sh
+      - name: Measure candidate direct and QUIC TCP throughput at 0 and 80 ms RTT
+        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_ARTIFACTS="$PWD/performance-after" bash scripts/ip-lab-linux.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: shaped-throughput
-          path: performance-lab-artifacts/
+          path: |
+            performance-before/
+            performance-after/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

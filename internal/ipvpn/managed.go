@@ -56,7 +56,7 @@ func newHub(d Device, stats *Stats) *packetHub {
 	return h
 }
 func (h *packetHub) session() *packetView {
-	v := &packetView{h, make(chan []byte, 64), make(chan struct{}), sync.Once{}}
+	v := &packetView{h, make(chan []byte, PacketQueueSize), make(chan struct{}), sync.Once{}}
 	h.mu.Lock()
 	h.view = v
 	h.mu.Unlock()

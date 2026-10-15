@@ -488,6 +488,13 @@ def change_panel_port(m, requested):
 
 def update(args, m, revision, release):
     verify_owned(m)
+    certificate_source=getattr(args,'tls_cert',None);key_source=getattr(args,'tls_key',None)
+    if bool(certificate_source)!=bool(key_source): raise RuntimeError('Specify both --tls-cert and --tls-key')
+    if certificate_source:
+        candidate=dict(m,tls_source={'cert':str(pathlib.Path(certificate_source).absolute()),'key':str(pathlib.Path(key_source).absolute())},acme_port=None)
+        certificate_issue(candidate)
+        m.clear();m.update(candidate);save(JOURNAL/'manifest.json',m)
+        run('systemctl','restart','connect-ui.service');health(m)
     if revision == m['revision']:
         if getattr(args,'panel_port',None) is not None: change_panel_port(m,args.panel_port)
         print('Already installed this immutable revision'); return
@@ -497,6 +504,9 @@ def update(args, m, revision, release):
     # Compatibility check is read-only: never restore a stale state backup that
     # could undo newer certificate revocations.
     try:
+        target_version=run(str(target/'bin'/'connect-control'),'version').stdout.strip()
+        if (m['panel_port'] not in (80,443) or m.get('tls_source')) and target_version in ('0.2.0','0.2.1','0.2.2','0.2.3','0.2.4'):
+            raise RuntimeError('Target installer cannot renew certificates on a custom panel port; keeping current installation')
         checked = run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json')).stdout.strip()
         if checked != 'api_version=1 state_version=1 invitations_version=1':
             raise RuntimeError('Unrecognized persisted-state compatibility contract')
@@ -507,6 +517,10 @@ def update(args, m, revision, release):
         next_link = ROOT / 'current.next'; next_link.symlink_to(target); os.replace(next_link, ROOT / 'current')
         for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m)
+        interfaces=json.loads(run('ip','-j','-d','link','show','dev','cc-vps0').stdout)
+        if not interfaces or interfaces[0].get('ifalias')!='connect-core:'+m['owner']:
+            raise RuntimeError('Owned TUN identity changed; refusing queue tuning')
+        run('ip','link','set','dev','cc-vps0','txqueuelen','4096')
     except BaseException:
         for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name, check=False)
         next_link = ROOT / 'current.next'; next_link.unlink(missing_ok=True); next_link.symlink_to(old); os.replace(next_link, ROOT / 'current')

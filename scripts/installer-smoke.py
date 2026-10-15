@@ -165,8 +165,28 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
             try: urllib.request.urlopen('http://198.18.0.2:17890',timeout=5)
             except urllib.error.HTTPError as e: assert e.code==400
             else: raise AssertionError('panel accepted plaintext HTTP')
+            supplied_cert=stage/'supplied-cert.pem';supplied_key=stage/'supplied-key.pem'
+            shutil.copyfile(installer.CONFIG/'panel-tls'/'current'/'cert.pem',supplied_cert)
+            shutil.copyfile(installer.CONFIG/'panel-tls'/'current'/'key.pem',supplied_key)
             installer.rollback_install(json.loads((installer.JOURNAL/'manifest.json').read_text()))
             assert https_neighbor.poll() is None and network.firewall()==before_firewall
+            http_neighbor=subprocess.Popen([sys.executable,'-m','http.server','80','--bind','198.18.0.2'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(100):
+                    try:
+                        with socket.create_connection(('198.18.0.2',80),timeout=.1): break
+                    except OSError: time.sleep(.05)
+                ns.panel_port=24443;ns.tls_cert=str(supplied_cert);ns.tls_key=str(supplied_key)
+                installer.prepare_install(ns);assert ns.acme_port is None
+                with contextlib.redirect_stdout(io.StringIO()): installer.install(ns,'d'*40,release)
+                access=json.loads((installer.CONFIG/'install-access.json').read_text());origin='https://198.18.0.2:24443'
+                csrf=api('/auth/login',{'username':'admin','password':access['password']})['csrf']
+                assert api('/api/status')['status']=='running'
+                assert https_neighbor.poll() is None and http_neighbor.poll() is None
+                installer.rollback_install(json.loads((installer.JOURNAL/'manifest.json').read_text()))
+                assert network.firewall()==before_firewall
+            finally:
+                http_neighbor.terminate();http_neighbor.wait()
         finally:
             https_neighbor.terminate();https_neighbor.wait();origin='https://198.18.0.2'
         # Successful services do not imply externally accessible UI. A failed

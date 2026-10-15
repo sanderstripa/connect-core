@@ -59,6 +59,10 @@ func openLinux(name string, owned bool) (Device, error) {
 	if e = unix.IoctlIfreq(socket, unix.SIOCSIFMTU, req); e != nil {
 		return fail(e)
 	}
+	req.SetUint32(PacketQueueSize)
+	if e = unix.IoctlIfreq(socket, unix.SIOCSIFTXQLEN, req); e != nil {
+		return fail(e)
+	}
 	// A reconnecting peer can send immediately after the server authenticates
 	// it. Linux returns EIO when a packet is written to a DOWN TUN, so make our
 	// newly created namespace-only device writable before publishing it. Address
