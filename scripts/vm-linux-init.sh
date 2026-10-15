@@ -83,7 +83,18 @@ while read -r command; do
   link-up) ip -n edge link set "$nic" up; echo LAB_LINK_UP ;;
   latency-80) modprobe sch_netem; ip netns exec edge tc qdisc replace dev "$nic" root netem delay 80ms limit 1024; echo LAB_LATENCY_80 ;;
   latency-clear) ip netns exec edge tc qdisc del dev "$nic" root; echo LAB_LATENCY_CLEAR ;;
-  pause-captures) kill -INT "$capture" "$tuncapture"; wait "$capture" 2>/dev/null || true; wait "$tuncapture" 2>/dev/null || true; capture=0; tuncapture=0; echo LAB_CAPTURES_PAUSED ;;
+  pause-captures)
+   # These preliminary captures are discarded before performance testing.
+   # Idle TUN capture can retain its inherited ignored SIGINT disposition.
+   # Stop these exact child PIDs; security captures are started afresh below.
+   for pid in "$capture" "$tuncapture"; do
+    kill -TERM "$pid" 2>/dev/null || true
+    for i in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep .05; done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid"; fi
+    wait "$pid" 2>/dev/null || true
+   done
+   capture=0; tuncapture=0; echo LAB_CAPTURES_PAUSED
+   ;;
   resume-captures)
    [ "$capture" -eq 0 ] && [ "$tuncapture" -eq 0 ]
    ip netns exec edge tcpdump -U -n -s 160 -i "$nic" -w /artifacts/underlay.pcap >/artifacts/capture.log 2>&1 &
