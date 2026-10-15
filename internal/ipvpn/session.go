@@ -24,7 +24,7 @@ type Device interface {
 }
 
 // PacketQueueSize bounds per-session bursts; server payload memory has a separate global cap.
-const PacketQueueSize = 256
+const PacketQueueSize = 4096
 const maxQueuedPayload = 64 << 20
 
 type Stats struct {
@@ -120,7 +120,7 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 	defer stopConn()
 	defer d.Close()
 	result := make(chan error, 3)
-	incoming := make(chan QueuedPacket, PacketQueueSize)
+	incoming := NewPacketQueue(PacketQueueSize)
 	go func() {
 		buf := make([]byte, 65535)
 		for {
@@ -156,7 +156,11 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 			case <-c.Context().Done():
 				result <- context.Cause(c.Context())
 				return
-			case queued := <-incoming:
+			case <-incoming.Ready():
+				queued, ok := incoming.Pop()
+				if !ok {
+					continue
+				}
 				stats.ReceiveQueue.Observe(time.Since(queued.At))
 				pkt := queued.Data
 				start := time.Now()
@@ -193,13 +197,13 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 type peer struct {
 	conn     *quic.Conn
 	policy   Policy
-	queue    chan QueuedPacket
-	incoming chan QueuedPacket
+	queue    *PacketQueue
+	incoming *PacketQueue
 }
 
 // Drain QUIC's bounded DATAGRAM receive queue independently of a potentially
 // slow OS TUN write. Returned DATAGRAM slices are owned by this caller.
-func receiveToQueue(ctx context.Context, c *quic.Conn, p Policy, stats *Stats, out chan QueuedPacket, budget *atomic.Int64, incoming bool) error {
+func receiveToQueue(ctx context.Context, c *quic.Conn, p Policy, stats *Stats, out *PacketQueue, budget *atomic.Int64, incoming bool) error {
 	for {
 		packet, err := c.ReceiveDatagram(ctx)
 		if err != nil {
@@ -217,9 +221,7 @@ func receiveToQueue(ctx context.Context, c *quic.Conn, p Policy, stats *Stats, o
 			stats.Dropped.Add(1)
 			continue
 		}
-		select {
-		case out <- QueuedPacket{Data: packet, At: time.Now()}:
-		default:
+		if !out.Push(QueuedPacket{Data: packet, At: time.Now()}) {
 			if budget != nil {
 				budget.Add(-size)
 			}
@@ -289,9 +291,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					stats.QueueDrops.Add(1)
 					stats.Dropped.Add(1)
 				} else {
-					select {
-					case p.queue <- QueuedPacket{Data: append([]byte(nil), pkt...), At: time.Now()}:
-					default:
+					if !p.queue.Push(QueuedPacket{Data: append([]byte(nil), pkt...), At: time.Now()}) {
 						queuedPayload.Add(-size)
 						stats.QueueDrops.Add(1)
 						stats.Dropped.Add(1)
@@ -355,8 +355,8 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				}
 				return
 			}
-			p.queue = make(chan QueuedPacket, PacketQueueSize)
-			p.incoming = make(chan QueuedPacket, PacketQueueSize)
+			p.queue = NewPacketQueue(PacketQueueSize)
+			p.incoming = NewPacketQueue(PacketQueueSize)
 			defer control.Release(pin)
 			mu.Lock()
 			if peers[policy.Device] != nil {
@@ -370,15 +370,13 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				mu.Lock()
 				defer mu.Unlock()
 				delete(peers, policy.Device)
-				for _, queue := range []chan QueuedPacket{p.queue, p.incoming} {
-				drain:
+				for _, queue := range []*PacketQueue{p.queue, p.incoming} {
 					for {
-						select {
-						case packet := <-queue:
-							queuedPayload.Add(-int64(len(packet.Data)))
-						default:
-							break drain
+						packet, ok := queue.Pop()
+						if !ok {
+							break
 						}
+						queuedPayload.Add(-int64(len(packet.Data)))
 					}
 				}
 			}()
@@ -397,7 +395,11 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					select {
 					case <-c.Context().Done():
 						return
-					case queued := <-p.queue:
+					case <-p.queue.Ready():
+						queued, ok := p.queue.Pop()
+						if !ok {
+							continue
+						}
 						stats.SendQueue.Observe(time.Since(queued.At))
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))
@@ -424,7 +426,11 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					select {
 					case <-c.Context().Done():
 						return
-					case queued := <-p.incoming:
+					case <-p.incoming.Ready():
+						queued, ok := p.incoming.Pop()
+						if !ok {
+							continue
+						}
 						stats.ReceiveQueue.Observe(time.Since(queued.At))
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))

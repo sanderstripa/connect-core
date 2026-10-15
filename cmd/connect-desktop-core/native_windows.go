@@ -37,7 +37,7 @@ type nativeBridge struct {
 }
 type nativeView struct {
 	bridge      *nativeBridge
-	packets     chan ipvpn.QueuedPacket
+	packets     *ipvpn.PacketQueue
 	done        chan struct{}
 	once        sync.Once
 	diagnostics sync.Mutex
@@ -238,9 +238,7 @@ func (b *nativeBridge) read() {
 		}
 		b.mu.Lock()
 		if b.active != nil {
-			select {
-			case b.active.packets <- ipvpn.QueuedPacket{Data: p, At: time.Now()}:
-			default:
+			if !b.active.packets.Push(ipvpn.QueuedPacket{Data: p, At: time.Now()}) {
 				b.stats.QueueDrops.Add(1)
 				b.stats.Dropped.Add(1)
 			}
@@ -252,36 +250,42 @@ func (b *nativeBridge) read() {
 	}
 }
 func (b *nativeBridge) view() *nativeView {
-	v := &nativeView{bridge: b, packets: make(chan ipvpn.QueuedPacket, ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
+	v := &nativeView{bridge: b, packets: ipvpn.NewPacketQueue(ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
 	b.mu.Lock()
 	b.active = v
 	b.mu.Unlock()
 	return v
 }
 func (v *nativeView) Read(p []byte) (int, error) {
-	select {
-	case <-v.done:
-		return 0, io.EOF
-	case <-v.bridge.done:
-		return 0, io.EOF
-	case queued := <-v.packets:
-		v.bridge.stats.NativeQueue.Observe(time.Since(queued.At))
-		pkt := queued.Data
-		src, _, err := ipvpn.Packet(pkt)
-		reason := ""
-		if err != nil {
-			reason = err.Error()
-		} else if src != v.bridge.policy.Device {
-			reason = "source differs from certificate lease"
-		} else if !v.bridge.policy.Allows(pkt, true) {
-			reason = "destination outside policy"
+	for {
+		select {
+		case <-v.done:
+			return 0, io.EOF
+		case <-v.bridge.done:
+			return 0, io.EOF
+		case <-v.packets.Ready():
+			queued, ok := v.packets.Pop()
+			if !ok {
+				continue
+			}
+			v.bridge.stats.NativeQueue.Observe(time.Since(queued.At))
+			pkt := queued.Data
+			src, _, err := ipvpn.Packet(pkt)
+			reason := ""
+			if err != nil {
+				reason = err.Error()
+			} else if src != v.bridge.policy.Device {
+				reason = "source differs from certificate lease"
+			} else if !v.bridge.policy.Allows(pkt, true) {
+				reason = "destination outside policy"
+			}
+			if reason != "" {
+				v.diagnostics.Lock()
+				v.rejected[reason]++
+				v.diagnostics.Unlock()
+			}
+			return copy(p, pkt), nil
 		}
-		if reason != "" {
-			v.diagnostics.Lock()
-			v.rejected[reason]++
-			v.diagnostics.Unlock()
-		}
-		return copy(p, pkt), nil
 	}
 }
 func (v *nativeView) Write(p []byte) (int, error) {

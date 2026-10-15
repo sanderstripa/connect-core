@@ -156,10 +156,18 @@ def throughput():
     streams, size = 4, 8 * 1024 * 1024
     gate = threading.Barrier(streams)
     samples, stop = [], threading.Event()
+    probe_losses = 0
     def latency():
+        nonlocal probe_losses
         while not stop.is_set():
             started=time.perf_counter()
-            if exchange(18082, CANARY) != CANARY: raise AssertionError('latency probe corrupted')
+            try:
+                if exchange(18082, CANARY) != CANARY: raise AssertionError('latency probe corrupted')
+            except socket.timeout:
+                # UDP delivery is not guaranteed. Report censored samples and
+                # loss explicitly instead of hiding loss or aborting the baseline.
+                probe_losses += 1
+                continue
             samples.append((time.perf_counter()-started)*1000)
             stop.wait(.05)
     started=time.perf_counter()
@@ -175,7 +183,7 @@ def throughput():
     samples.sort()
     print(json.dumps({'scope':'real TCP duplex through OS TUN, not public Internet', 'streams':streams,
         'bytes_per_direction':streams*size,'seconds':elapsed,'useful_mbps_per_direction':streams*size*8/elapsed/1e6,
-        'max_stream_seconds':max(durations),'udp_loaded_rtt_ms':{'samples':len(samples),'p50':statistics.median(samples),'p95':samples[min(len(samples)-1,int(len(samples)*.95))],'max':max(samples)}},indent=2),flush=True)
+        'max_stream_seconds':max(durations),'udp_loaded_rtt_ms':{'samples':len(samples),'lost':probe_losses,'timeout_ms':2000,'p50':statistics.median(samples),'p95':samples[min(len(samples)-1,int(len(samples)*.95))],'max':max(samples)}},indent=2),flush=True)
 
 def ready():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

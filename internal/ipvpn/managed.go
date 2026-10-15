@@ -21,7 +21,7 @@ type packetHub struct {
 }
 type packetView struct {
 	hub     *packetHub
-	packets chan QueuedPacket
+	packets *PacketQueue
 	done    chan struct{}
 	once    sync.Once
 }
@@ -45,9 +45,7 @@ func newHub(d Device, stats *Stats) *packetHub {
 				stats.InactiveDrops.Add(1)
 				stats.Dropped.Add(1)
 			} else {
-				select {
-				case v.packets <- QueuedPacket{Data: append([]byte{}, b[:n]...), At: time.Now()}:
-				default:
+				if !v.packets.Push(QueuedPacket{Data: append([]byte{}, b[:n]...), At: time.Now()}) {
 					stats.QueueDrops.Add(1)
 					stats.Dropped.Add(1)
 				}
@@ -58,7 +56,7 @@ func newHub(d Device, stats *Stats) *packetHub {
 	return h
 }
 func (h *packetHub) session() *packetView {
-	v := &packetView{h, make(chan QueuedPacket, PacketQueueSize), make(chan struct{}), sync.Once{}}
+	v := &packetView{h, NewPacketQueue(PacketQueueSize), make(chan struct{}), sync.Once{}}
 	h.mu.Lock()
 	h.view = v
 	h.mu.Unlock()
@@ -66,17 +64,23 @@ func (h *packetHub) session() *packetView {
 }
 func (h *packetHub) close() { _ = h.d.Close(); <-h.done }
 func (v *packetView) Read(b []byte) (int, error) {
-	select {
-	case <-v.done:
-		return 0, io.EOF
-	case <-v.hub.done:
-		v.hub.mu.Lock()
-		e := v.hub.err
-		v.hub.mu.Unlock()
-		return 0, e
-	case p := <-v.packets:
-		v.hub.stats.NativeQueue.Observe(time.Since(p.At))
-		return copy(b, p.Data), nil
+	for {
+		select {
+		case <-v.done:
+			return 0, io.EOF
+		case <-v.hub.done:
+			v.hub.mu.Lock()
+			e := v.hub.err
+			v.hub.mu.Unlock()
+			return 0, e
+		case <-v.packets.Ready():
+			p, ok := v.packets.Pop()
+			if !ok {
+				continue
+			}
+			v.hub.stats.NativeQueue.Observe(time.Since(p.At))
+			return copy(b, p.Data), nil
+		}
 	}
 }
 func (v *packetView) Write(b []byte) (int, error) {
