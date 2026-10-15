@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/access"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -388,6 +389,10 @@ func (w *worker) connect() {
 			}
 			if e != nil {
 				fmt.Fprintf(os.Stderr, "CONNECT connection failure: type=%T setup_failed=%t transient=%t\n", e, setupFailed, ipvpn.TransientDialError(e))
+				var application *quic.ApplicationError
+				if errors.As(e, &application) {
+					fmt.Fprintf(os.Stderr, "CONNECT server rejection: code=%d remote=%t\n", application.ErrorCode, application.Remote)
+				}
 				var certErr *tls.CertificateVerificationError
 				if errors.As(e, &certErr) {
 					w.code = 3

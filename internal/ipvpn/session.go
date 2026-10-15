@@ -162,6 +162,9 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 		}
 	}()
 	e := <-result
+	if cause := context.Cause(c.Context()); cause != nil {
+		e = cause
+	}
 	_ = c.CloseWithError(0, "packet pump stopped")
 	_ = d.Close()
 	cancel()
