@@ -5,10 +5,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/quic-go/quic-go"
+
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
-	"net"
+
 	"sync"
 	"time"
 )
@@ -108,23 +108,16 @@ func (m *Manager) Start() error {
 		}
 		return nil
 	}
-	pc, e := net.ListenPacket("udp", m.state.Config.Endpoint)
+	l, closeListener, e := ipvpn.Listen(m.state.Config.Endpoint, t)
 	if e != nil {
 		m.status = "error"
 		m.event("start failed: listener")
-		return errors.New("data listener unavailable")
-	}
-	l, e := quic.Listen(pc, t, ipvpn.QUIC())
-	if e != nil {
-		_ = pc.Close()
-		m.status = "error"
-		m.event("start failed: listener")
-		return errors.New("data listener unavailable")
+		return fmt.Errorf("data listener unavailable: %w", e)
 	}
 	d, e := m.open(m.state.Config.Interface)
 	if e != nil {
 		_ = l.Close()
-		_ = pc.Close()
+		_ = closeListener()
 		m.status = "error"
 		m.event("start failed: isolated TUN")
 		if m.state.Config.Environment == "managed-vps" {
@@ -141,7 +134,7 @@ func (m *Manager) Start() error {
 	m.event("server started")
 	go func() {
 		err := ipvpn.ServeControlled(ctx, l, d, m.control, &ipvpn.Stats{})
-		_ = pc.Close()
+		_ = closeListener()
 		m.mu.Lock()
 		m.cancel = nil
 		m.done = nil
