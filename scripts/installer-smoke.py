@@ -110,6 +110,18 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         status=api('/api/status');assert status['received_bytes']>0 and status['sent_bytes']>0, 'no real TUN byte counters'
         rows=api('/api/status')['devices'];device=rows[0]
         api('/api/device',{'id':device['id'],'action':'revoke','confirm':True})
+        # Move only the HTTPS panel, without restarting the Core/TUN or neighbors.
+        manifest=json.loads((installer.JOURNAL/'manifest.json').read_text())
+        old_core_pid=run('systemctl','show','connect-core.service','--property=MainPID','--value').stdout.strip()
+        try: installer.change_panel_port(manifest,17889)
+        except RuntimeError: pass
+        else: raise AssertionError('occupied panel port was adopted')
+        installer.change_panel_port(manifest,24443)
+        origin='https://198.18.0.2:24443'
+        csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
+        assert api('/api/status')['status']=='running'
+        assert run('systemctl','show','connect-core.service','--property=MainPID','--value').stdout.strip()==old_core_pid, 'panel move restarted Core'
+        assert neighbor.poll() is None
         # Health failure during an update restores the exact previous binaries,
         # without restoring a state backup that could undo the revocation.
         manifest=json.loads((installer.JOURNAL/'manifest.json').read_text());old=(installer.ROOT/'current').resolve()

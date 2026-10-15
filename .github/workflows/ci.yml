@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.0'
-      - run: sudo apt-get update && sudo apt-get install -y iproute2 tcpdump
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 tcpdump iperf3
       - run: go build -o bin/connect-core ./cmd/connect-core
       - run: go build -o bin/connect-control ./cmd/connect-control
       - run: go build -o bin/connect-ui ./cmd/connect-ui
@@ -40,6 +40,13 @@ jobs:
       - run: sudo env CONNECT_LAB_NATIVE_TUN_TEST=1 bash scripts/tun-startup-linux.sh
       - run: sudo env CONNECT_LAB_ARTIFACTS="$PWD/ip-lab-artifacts" bash scripts/ip-lab-linux.sh
       - run: sudo env CONNECT_LAB_MANAGED=1 CONNECT_LAB_ARTIFACTS="$PWD/managed-lab-artifacts" bash scripts/ip-lab-linux.sh
+      - name: Compare direct and QUIC TCP throughput at 0 and 80 ms RTT
+        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_ARTIFACTS="$PWD/performance-lab-artifacts" bash scripts/ip-lab-linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shaped-throughput
+          path: performance-lab-artifacts/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -5,14 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"sync"
 )
 
 const Version = 2
 const MaxPayload = 32768
-
-var packetFrames = sync.Pool{New: func() any { return new([2048]byte) }}
-
 const (
 	Import           byte = 1
 	Connect          byte = 2
@@ -61,19 +57,9 @@ func Write(w io.Writer, kind byte, b []byte) error {
 	if len(b) > MaxPayload {
 		return errors.New("oversized IPC frame")
 	}
-	// A single frame write avoids two kernel transitions for every TUN packet.
-	var frame []byte
-	if len(b)+8 <= 2048 {
-		buffer := packetFrames.Get().(*[2048]byte)
-		frame = buffer[:8+len(b)]
-		defer func() { clear(frame); packetFrames.Put(buffer) }()
-	} else {
-		frame = make([]byte, 8+len(b))
-	}
-	copy(frame, []byte{'C', 'C', Version, kind})
-	binary.LittleEndian.PutUint32(frame[4:], uint32(len(b)))
-	copy(frame[8:], b)
-	for _, p := range [][]byte{frame} {
+	h := []byte{'C', 'C', Version, kind, 0, 0, 0, 0}
+	binary.LittleEndian.PutUint32(h[4:], uint32(len(b)))
+	for _, p := range [][]byte{h, b} {
 		for len(p) > 0 {
 			n, e := w.Write(p)
 			if e != nil {

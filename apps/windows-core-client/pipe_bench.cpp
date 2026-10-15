@@ -41,5 +41,5 @@ double run(bool baseline,int sample){
  return double(count)*sizeof(packet)*8/seconds/1000000;
 }
 int main(){try{double before[3],after[3];for(int i=0;i<3;i++){before[i]=run(true,i);after[i]=run(false,i);}std::sort(before,before+3);std::sort(after,after+3);
- printf("{\"scope\":\"Windows overlapped named pipe, not Internet\",\"payload_bytes\":1100,\"packets_per_sample\":20000,\"samples\":3,\"baseline_mbps\":%.3f,\"optimized_mbps\":%.3f,\"ratio\":%.3f,\"integrity\":\"passed\"}\n",before[1],after[1],after[1]/before[1]);return 0;
+ printf("{\"scope\":\"Windows overlapped named pipe, not Internet\",\"payload_bytes\":1100,\"packets_per_sample\":20000,\"samples\":3,\"baseline_mbps\":%.3f,\"candidate_mbps\":%.3f,\"ratio\":%.3f,\"integrity\":\"passed\"}\n",before[1],after[1],after[1]/before[1]);return 0;
  }catch(const std::exception& e){fprintf(stderr,"%s\n",e.what());return 1;}}

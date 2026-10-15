@@ -1,4 +1,3 @@
-#include "pipe_io.h"
 // CONNECT's elevated network capability. No TLS credentials, shell commands,
 // browser, public listener or arbitrary file/route operations are accepted.
 #include <winsock2.h>
@@ -50,9 +49,18 @@ GUID filterKey(int n){GUID g=Sublayer;g.Data4[7]=static_cast<BYTE>(0xc1+n);retur
 void check(DWORD value){if(value!=ERROR_SUCCESS)throw value;}
 // A synchronous pipe handle serializes reads and writes across threads. The
 // helper must receive commands while concurrently forwarding Windows packets.
-bool transfer(bool reading,void* bytes,DWORD size){return connect_pipe::transfer(pipe,reading,bytes,size);}
+bool transfer(bool reading,void* bytes,DWORD size){
+ auto p=static_cast<BYTE*>(bytes);
+ while(size){
+  OVERLAPPED operation{};operation.hEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);if(!operation.hEvent)return false;
+  DWORD count=0;BOOL ok=reading?ReadFile(pipe,p,size,&count,&operation):WriteFile(pipe,p,size,&count,&operation);
+  if(!ok&&GetLastError()==ERROR_IO_PENDING)ok=GetOverlappedResult(pipe,&operation,&count,TRUE);
+  CloseHandle(operation.hEvent);if(!ok||!count)return false;p+=count;size-=count;
+ }
+ return true;
+}
 bool readExact(void* p,DWORD size){return transfer(true,p,size);}
-bool frame(uint8_t kind,const void* p,DWORD size){std::lock_guard<std::mutex> lock(outputMutex);return connect_pipe::frame(pipe,kind,p,size);}
+bool frame(uint8_t kind,const void* p,DWORD size){std::lock_guard<std::mutex> lock(outputMutex);BYTE h[8]={'C','C',2,kind};memcpy(h+4,&size,4);return transfer(false,h,8)&&(!size||transfer(false,const_cast<void*>(p),size));}
 void status(uint32_t state,uint32_t code=0){BYTE b[176]{};memcpy(b,&state,4);memcpy(b+4,&code,4);memcpy(b+8,&systemError,4);memcpy(b+16,&stage,4);uint32_t mode=guard?1:0;memcpy(b+32,&mode,4);frame(Status,b,sizeof(b));}
 std::wstring executable(){wchar_t path[32768];DWORD n=GetModuleFileNameW(nullptr,path,32768);if(!n||n==32768)throw DWORD(ERROR_BAD_PATHNAME);return std::wstring(path,n);}
 std::wstring adjacent(const wchar_t* name){auto p=executable();return p.substr(0,p.find_last_of(L"\\/")+1)+name;}

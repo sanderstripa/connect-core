@@ -123,6 +123,8 @@ def prepare_install(args):
     if args.panel_port is None:
         args.panel_port = choose(None, 17890, socket.SOCK_STREAM)
     args.acme_port = None
+    certificate_source=getattr(args,'tls_cert',None);key_source=getattr(args,'tls_key',None)
+    if bool(certificate_source)!=bool(key_source): raise RuntimeError('Specify both --tls-cert and --tls-key')
     for candidate in (443, 80):
         if candidate in used and candidate != args.panel_port: continue
         try:
@@ -130,9 +132,9 @@ def prepare_install(args):
             args.acme_port = candidate
             break
         except (RuntimeError,OSError): continue
-    if args.acme_port is None:
+    if args.acme_port is None and not certificate_source:
         raise RuntimeError('Both 443 and 80 are occupied; the panel supports any port but automatic IP certificate validation needs one free ACME port. No neighbor service will be stopped')
-    used[args.acme_port] = socket.SOCK_STREAM
+    if args.acme_port is not None: used[args.acme_port] = socket.SOCK_STREAM
     for name, default in [('control_port', 17891), ('enrollment_port', 17900)]:
         if getattr(args, name) is None: setattr(args, name, choose(None, default, socket.SOCK_STREAM))
     if not args.pool:
@@ -275,13 +277,20 @@ def certificate_issue(m):
     challenge_port = m.get('acme_port',m['panel_port'])
     # ACME listeners are temporary and independent of the HTTPS panel port.
     # Bind/preflight first; never stop or take over a neighbor's listener.
-    check_ports({challenge_port:socket.SOCK_STREAM})
     rule=['-p','tcp','-d',m['panel_ip'],'--dport',str(challenge_port),'-m','comment','--comment','connect-acme:'+m['owner'],'-j','ACCEPT']
     opened=False
     try:
-        if challenge_port != m['panel_port']:
-            run('iptables','-w','5','-I','INPUT','1',*rule);opened=True
-        run(str(ROOT/'current'/'bin'/'connect-cert'),m['panel_ip'],str(STATE/'acme'),str(stage),str(m.get('acme_port',m['panel_port'])),m['acme_directory'],env=dict(os.environ,LEGO_CA_CERTIFICATES=m['test_ca']) if m.get('test_ca') else None)
+        if m.get('tls_source'):
+            shutil.copyfile(m['tls_source']['cert'],stage/'cert.pem');shutil.copyfile(m['tls_source']['key'],stage/'key.pem')
+            public_cert=run('openssl','x509','-in',str(stage/'cert.pem'),'-pubkey','-noout').stdout
+            public_key=run('openssl','pkey','-in',str(stage/'key.pem'),'-pubout').stdout
+            if public_cert!=public_key: raise RuntimeError('HTTPS certificate/key mismatch')
+            run('openssl','x509','-checkend','3600','-noout','-in',str(stage/'cert.pem'))
+        else:
+            check_ports({challenge_port:socket.SOCK_STREAM})
+            if challenge_port != m['panel_port']:
+                run('iptables','-w','5','-I','INPUT','1',*rule);opened=True
+            run(str(ROOT/'current'/'bin'/'connect-cert'),m['panel_ip'],str(STATE/'acme'),str(stage),str(challenge_port),m['acme_directory'],env=dict(os.environ,LEGO_CA_CERTIFICATES=m['test_ca']) if m.get('test_ca') else None)
         # Verify IP SAN, chain and expiry against system trust, never curl -k.
         run('openssl','verify','-verify_ip',m['panel_ip'],'-purpose','sslserver','-untrusted',str(stage/'cert.pem'),*(['-CAfile',m['test_ca']] if m.get('test_ca') else []),str(stage/'cert.pem'))
         stage.chmod(0o750); os.chown(stage,0,admin_gid)
@@ -357,7 +366,8 @@ def install(args, revision, release):
         if re.search(r'xray|sudoku|x-ui|wireguard|openvpn|vpn', line, re.I): print('  ' + line.split()[0])
     password = secrets.token_urlsafe(24)
     ensure_fresh(); check_ports(ports)  # Recheck after build/operator input.
-    m = {'schema': 1, 'owner': owner, 'revision': revision, 'created_dirs': [], 'uids': {}, 'unit_hashes': {}, 'panel_port': args.panel_port, 'panel_ip':address, 'public_https':True, 'acme_port':args.acme_port, 'acme_directory':getattr(args,'acme_directory','https://acme-v02.api.letsencrypt.org/directory')}
+    m = {'schema': 1, 'owner': owner, 'revision': revision, 'created_dirs': [], 'uids': {}, 'unit_hashes': {}, 'panel_port': args.panel_port, 'panel_ip':address, 'public_https':True, 'acme_port':getattr(args,'acme_port',args.panel_port), 'acme_directory':getattr(args,'acme_directory','https://acme-v02.api.letsencrypt.org/directory')}
+    if getattr(args,'tls_cert',None): m['tls_source']={'cert':str(pathlib.Path(args.tls_cert).absolute()),'key':str(pathlib.Path(args.tls_key).absolute())}
     test_ca=getattr(args,'test_acme_ca',None); test_probe=getattr(args,'test_probe',None)
     if test_ca or test_probe:
         if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('CONNECT_DISPOSABLE_INSTALL_TEST')!='1' or ipaddress.ip_address(address).is_global or not test_ca or not test_probe:
@@ -423,9 +433,64 @@ def start_owned(name):
     run('systemctl','reset-failed',name)
     run('systemctl','start',name)
 
+def change_panel_port(m, requested):
+    """Move only the owned HTTPS listener/rules; TUN/Core stay running."""
+    verify_owned(m)
+    if not m.get('public_https'): raise RuntimeError('Public HTTPS configuration is required for a panel port change')
+    old_port=m['panel_port']
+    if requested==old_port: return
+    if requested==0:
+        for candidate in range(17890,18890):
+            try: check_ports({candidate:socket.SOCK_STREAM}); requested=candidate; break
+            except (RuntimeError,OSError): continue
+        if requested==0: raise RuntimeError('No free panel port in 17890..18889')
+    check_ports({requested:socket.SOCK_STREAM})
+    settings_path=JOURNAL/'network.json'; settings=json.loads(settings_path.read_text())
+    if settings.get('owner')!=m['owner'] or settings.get('panel_port')!=old_port: raise RuntimeError('Panel/network ownership mismatch')
+    ui_path=CONFIG/'ui.json'; ui=json.loads(ui_path.read_text()); metadata=ui_path.stat()
+    if ui.get('listen')!=f"{m['panel_ip']}:{old_port}" or not ui.get('public_https'): raise RuntimeError('Panel configuration changed outside installer')
+    def publish_ui(value):
+        save(ui_path,value);os.chown(ui_path,metadata.st_uid,metadata.st_gid);os.chmod(ui_path,metadata.st_mode & 0o777)
+    chain='CC_'+m['owner'][:8]+'_I'
+    def entries(port):
+        base=['-p','tcp','-d',m['panel_ip'],'--dport',str(port)]
+        return [(chain,base+['-j','ACCEPT']),('INPUT',base+['-m','comment','--comment','connect-core:'+m['owner'],'-j',chain])]
+    def add(entries):
+        for name,rule in entries:
+            if run('iptables','-w','5','-C',name,*rule,check=False).returncode:
+                run('iptables','-w','5','-I',name,'1',*rule)
+    def remove(entries):
+        for name,rule in reversed(entries):
+            if run('iptables','-w','5','-C',name,*rule,check=False).returncode==0:
+                run('iptables','-w','5','-D',name,*rule)
+    next_manifest=dict(m,panel_port=requested,acme_port=m.get('acme_port',old_port))
+    next_ui=dict(ui,listen=f"{m['panel_ip']}:{requested}")
+    next_settings=dict(settings,panel_port=requested)
+    with open(JOURNAL/'network.lock','a') as lock:
+        os.chmod(lock.name,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
+        try:
+            add(entries(requested));publish_ui(next_ui)
+            run('systemctl','restart','connect-ui.service')
+            health(next_manifest)
+            next_manifest['public_probe']=remote_panel_check(next_manifest)
+            save(settings_path,next_settings);save(JOURNAL/'manifest.json',next_manifest)
+            remove(entries(old_port))
+        except BaseException:
+            publish_ui(ui);save(settings_path,settings);save(JOURNAL/'manifest.json',m)
+            add(entries(old_port));remove(entries(requested))
+            run('systemctl','restart','connect-ui.service');health(m)
+            raise
+    m.clear();m.update(next_manifest)
+    access=CONFIG/'install-access.json'
+    if access.is_file():
+        value=json.loads(access.read_text());value['panel']=panel_url(m);save(access,value)
+    print('Panel: '+panel_url(m))
+
 def update(args, m, revision, release):
     verify_owned(m)
-    if revision == m['revision']: print('Already installed this immutable revision'); return
+    if revision == m['revision']:
+        if getattr(args,'panel_port',None) is not None: change_panel_port(m,args.panel_port)
+        print('Already installed this immutable revision'); return
     old = (ROOT / 'current').resolve(); target = ROOT / 'releases' / revision
     if target.exists(): raise RuntimeError('Release directory already exists; refusing overwrite')
     publish_release(release, target)
@@ -448,10 +513,12 @@ def update(args, m, revision, release):
         for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m); shutil.rmtree(target); raise
     m['previous_revision'] = m['revision']; m['revision'] = revision; save(JOURNAL / 'manifest.json', m)
+    if getattr(args,'panel_port',None) is not None: change_panel_port(m,args.panel_port)
     print('CONNECT updated; credentials, device registrations and revocations preserved. Previous binary revision retained.')
 
 def main():
     p = argparse.ArgumentParser(); p.add_argument('action', nargs='?', default='install', choices=['install', 'update', 'rollback', 'uninstall', 'status', 'renew-cert'])
+    p.add_argument('--tls-cert',help='Existing trusted public-IP certificate, read-only source'); p.add_argument('--tls-key',help='Matching private key, copied into protected CONNECT storage')
     p.add_argument('--revision'); p.add_argument('--source'); p.add_argument('--endpoint'); p.add_argument('--pool'); p.add_argument('--uplink')
     p.add_argument('--panel-port', type=int); p.add_argument('--control-port', type=int); p.add_argument('--enrollment-port', type=int)
     p.add_argument('--test-acme-ca', help=argparse.SUPPRESS); p.add_argument('--test-probe', help=argparse.SUPPRESS)

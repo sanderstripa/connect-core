@@ -2,6 +2,10 @@
 # Only creates namespaces and interfaces inside them; no host routes/firewall/NAT.
 set -euo pipefail
 [[ $(uname -s) == Linux && $EUID == 0 ]] || { echo 'Requires root in a disposable Linux CI runner/VM'; exit 1; }
+if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
+  [[ ${GITHUB_ACTIONS:-} == true && ${CONNECT_DISPOSABLE_PERF:-} == 1 ]] || { echo 'Performance shaping is restricted to disposable CI'; exit 1; }
+  command -v tc >/dev/null; command -v iperf3 >/dev/null
+fi
 for cmd in ip python3 tcpdump sysctl; do command -v "$cmd" >/dev/null; done
 root=$(cd "$(dirname "$0")/.." && pwd)
 bin=${CONNECT_LAB_BINARY:-$root/bin/connect-core}
@@ -54,8 +58,10 @@ ip netns exec "$edge" sysctl -q -w net.ipv4.ip_forward=1
 ip netns exec "$service" python3 "$root/scripts/ip-lab-services.py" serve >"$artifacts/services.log" 2>&1 &
 pids+=("$!")
 ip netns exec "$service" python3 "$root/scripts/ip-lab-services.py" ready
-ip netns exec "$client" tcpdump -U -n -i cw -w "$artifacts/underlay.pcap" >"$artifacts/capture.log" 2>&1 &
-capture=$!; pids+=("$capture")
+if [[ ${CONNECT_LAB_PERF:-0} != 1 ]]; then
+  ip netns exec "$client" tcpdump -U -n -i cw -w "$artifacts/underlay.pcap" >"$artifacts/capture.log" 2>&1 &
+  capture=$!; pids+=("$capture")
+fi
 if [[ ${CONNECT_LAB_MANAGED:-0} == 1 ]]; then
   "$root/bin/connect-control" init "$lab/control" "$lab/credentials/ip-server.json"
   printf '%s\n' 'isolated-ci-only-password' | "$root/bin/connect-ui" init "$lab/ui" http://127.0.0.1:17891 "$lab/control/control-token"
@@ -84,6 +90,35 @@ ip -n "$client" addr add 10.231.0.2/32 dev ccip0
 ip -n "$client" link set ccip0 up
 ip -n "$client" route add 10.232.0.1/32 dev ccip0 src 10.231.0.2
 ip -n "$client" route add 10.232.0.9/32 dev ccip0 src 10.231.0.2
+if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
+  # Explicit private plaintext baseline; these captures are performance evidence,
+  # separate from the ordinary lab's encrypted-traffic / leak checks below.
+  ip netns exec "$edge" iperf3 -s -B 192.168.231.1 -p 18084 >"$artifacts/iperf-direct.log" 2>&1 & pids+=("$!")
+  ip netns exec "$service" iperf3 -s -B 10.232.0.1 -p 18084 >"$artifacts/iperf-vpn.log" 2>&1 & pids+=("$!")
+  sleep 1
+  for latency in 0 40; do
+    ip netns exec "$client" tc qdisc replace dev cw root netem delay "${latency}ms" limit 20000
+    ip netns exec "$edge" tc qdisc replace dev ew root netem delay "${latency}ms" limit 20000
+    for route in direct vpn; do
+      target=192.168.231.1; [[ $route != vpn ]] || target=10.232.0.1
+      for direction in upload download; do
+        options=(); [[ $direction != download ]] || options+=(-R)
+        ip netns exec "$client" timeout 30 iperf3 -4 -c "$target" -p 18084 -P 4 -t 5 -O 1 --connect-timeout 10000 -J "${options[@]}" >"$artifacts/${route}-${latency}-${direction}.json"
+      done
+    done
+  done
+  python3 - "$artifacts" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]);rows=[]
+for f in sorted(p.glob('*-*-*.json')):
+    if not f.stem.startswith(('direct-','vpn-')): continue
+    d=json.loads(f.read_text());mode,delay,direction=f.stem.split('-')
+    rows.append(dict(mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),cpu=d['end'].get('cpu_utilization_percent')))
+out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','streams':4,'results':rows}
+(p/'throughput-summary.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+PY
+  exit 0
+fi
 ip netns exec "$client" python3 "$root/scripts/ip-lab-services.py" check >"$artifacts/measurements.json"
 # Route exists but policy must still deny .9.
 ip netns exec "$client" python3 "$root/scripts/ip-lab-services.py" denied
