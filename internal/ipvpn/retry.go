@@ -7,6 +7,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"net"
 	"net/netip"
+	"syscall"
 	"time"
 )
 
@@ -17,6 +18,9 @@ func TransientDialError(err error) bool {
 	var app *quic.ApplicationError
 	if errors.As(err, &app) {
 		return app.ErrorCode == 3
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return true
 	}
 	var network net.Error
 	return errors.As(err, &network) && network.Timeout()

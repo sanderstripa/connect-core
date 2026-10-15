@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import hashlib
 import ipaddress
+import itertools
 import json
 import os
 import pathlib
@@ -89,6 +90,7 @@ def ensure_fresh():
     if run('getent', 'group', GROUP, check=False).returncode == 0: raise RuntimeError(f'Group {GROUP} already exists')
 
 def prepare_install(args):
+    if args.panel_port==0: args.panel_port=None
     """Choose unused defaults; explicit operator choices must pass unchanged."""
     route = json.loads(run('ip', '-j', '-4', 'route', 'get', '1.1.1.1').stdout)[0]
     args.uplink = args.uplink or route['dev']
@@ -107,12 +109,12 @@ def prepare_install(args):
         if explicit is not None:
             if explicit in used: raise RuntimeError('CONNECT ports must be distinct')
             check_ports({explicit: kind}); used[explicit] = kind; return explicit
-        for candidate in range(default, min(default + 1000, 65536)):
+        for candidate in itertools.chain(range(default,65536),range(1024,default)):
             if candidate in used: continue
             try: check_ports({candidate: kind})
             except (RuntimeError, OSError): continue
             used[candidate] = kind; return candidate
-        raise RuntimeError('No free CONNECT port in the automatic search range')
+        raise RuntimeError('No free CONNECT port in 1024..65535')
     # Reserve all explicit choices before selecting any defaults.
     explicit = [(int(port) if not automatic_endpoint else None, socket.SOCK_DGRAM),
                 (args.panel_port, socket.SOCK_STREAM), (args.control_port, socket.SOCK_STREAM), (args.enrollment_port, socket.SOCK_STREAM)]
@@ -440,10 +442,10 @@ def change_panel_port(m, requested):
     old_port=m['panel_port']
     if requested==old_port: return
     if requested==0:
-        for candidate in range(17890,18890):
+        for candidate in itertools.chain(range(17890,65536),range(1024,17890)):
             try: check_ports({candidate:socket.SOCK_STREAM}); requested=candidate; break
             except (RuntimeError,OSError): continue
-        if requested==0: raise RuntimeError('No free panel port in 17890..18889')
+        if requested==0: raise RuntimeError('No free panel port in 1024..65535')
     check_ports({requested:socket.SOCK_STREAM})
     settings_path=JOURNAL/'network.json'; settings=json.loads(settings_path.read_text())
     if settings.get('owner')!=m['owner'] or settings.get('panel_port')!=old_port: raise RuntimeError('Panel/network ownership mismatch')

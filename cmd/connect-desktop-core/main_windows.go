@@ -387,6 +387,7 @@ func (w *worker) connect() {
 				}
 			}
 			if e != nil {
+				fmt.Fprintf(os.Stderr, "CONNECT connection failure: type=%T setup_failed=%t transient=%t\n", e, setupFailed, ipvpn.TransientDialError(e))
 				var certErr *tls.CertificateVerificationError
 				if errors.As(e, &certErr) {
 					w.code = 3
