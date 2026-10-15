@@ -199,7 +199,7 @@ func (m *Manager) Snapshot() map[string]any {
 	if m.status == "running" || m.status == "stopping" {
 		uptime = int64(time.Since(m.started).Seconds())
 	}
-	return map[string]any{"environment": m.state.Config.Environment, "device_network": m.state.Config.DeviceNetwork, "api_version": APIVersion, "core_version": Version, "protocol_version": 2, "transport": "QUIC DATAGRAM / TLS 1.3 mTLS", "status": m.status, "endpoint": m.state.Config.Endpoint, "interface": m.state.Config.Interface, "destinations": m.state.Config.Destinations, "uptime_seconds": uptime, "active_sessions": active, "received_bytes": rx, "sent_bytes": tx, "devices": devices, "metrics": SystemMetrics(), "capabilities": map[string]bool{"hot_revocation": true, "csr_enrollment": true, "qr_import": false, "core_update": false}}
+	return map[string]any{"udp_buffers": ipvpn.SocketBufferStats(), "environment": m.state.Config.Environment, "device_network": m.state.Config.DeviceNetwork, "api_version": APIVersion, "core_version": Version, "protocol_version": 2, "transport": "QUIC DATAGRAM / TLS 1.3 mTLS", "status": m.status, "endpoint": m.state.Config.Endpoint, "interface": m.state.Config.Interface, "destinations": m.state.Config.Destinations, "uptime_seconds": uptime, "active_sessions": active, "received_bytes": rx, "sent_bytes": tx, "devices": devices, "metrics": SystemMetrics(), "capabilities": map[string]bool{"hot_revocation": true, "csr_enrollment": true, "qr_import": false, "core_update": false}}
 }
 func clone(s State) State {
 	out := s

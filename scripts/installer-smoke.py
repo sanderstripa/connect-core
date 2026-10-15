@@ -81,6 +81,15 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert certpath.read_bytes()!=old_cert, 'short-lived certificate not renewed'
         csrf=api('/auth/login',{'username':'admin','password':password})['csrf']
         status=api('/api/status');assert status['status']=='running' and status['active_sessions']==0, 'fake/bootstrap session'
+        assert min(status['udp_buffers'].values())>=7*1024*1024, 'privilege-separated UDP buffers missing'
+        core_pid=run('systemctl','show','connect-core.service','--property=MainPID','--value').stdout.strip()
+        capabilities=next(v for v in pathlib.Path('/proc',core_pid,'status').read_text().splitlines() if v.startswith('CapEff:'))
+        assert int(capabilities.split()[1],16)==0, 'Core received network/root capabilities'
+        for _ in range(2):
+            api('/api/server',{'action':'stop','confirm':True})
+            assert api('/api/status')['status']=='stopped'
+            api('/api/server',{'action':'start'})
+            assert api('/api/status')['status']=='running'
         invite=api('/api/invite',{'name':'Actual installer client','ip':'10.231.0.2'})
         png=stage/'invite.png';png.write_bytes(base64.b64decode(invite['qr_png']))
         decoded=run('zbarimg','--quiet','--raw',str(png)).stdout.strip()

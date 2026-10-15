@@ -11,7 +11,13 @@ import (
 // Listen owns its socket and transport. Listener.Close alone leaves accepted
 // QUIC connections alive; explicit ownership makes component restart reliable.
 func Listen(address string, t *tls.Config) (*quic.Listener, func() error, error) {
-	socket, e := net.ListenPacket("udp4", address)
+	socket, e := activatedPacketConn(address)
+	if e != nil {
+		return nil, nil, e
+	}
+	if socket == nil {
+		socket, e = net.ListenPacket("udp4", address)
+	}
 	if e != nil {
 		return nil, nil, e
 	}

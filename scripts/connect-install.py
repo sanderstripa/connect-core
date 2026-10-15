@@ -28,7 +28,7 @@ CONFIG = pathlib.Path('/etc/connect-core')
 JOURNAL = pathlib.Path('/var/lib/connect-core-installer')
 UNITS = pathlib.Path('/etc/systemd/system')
 RUNTIME_NAMES = ['connect-core-network.service', 'connect-core.service', 'connect-ui.service']
-NAMES = RUNTIME_NAMES + ['connect-ui-cert.service', 'connect-ui-cert.timer']
+NAMES = ['connect-core-network.service','connect-core.socket','connect-core.service','connect-ui.service','connect-ui-cert.service','connect-ui-cert.timer']
 USERS = ['connectcore', 'connectui']
 GROUP = 'connectadmin'
 
@@ -207,14 +207,19 @@ def publish_release(release, target):
             if path.is_symlink(): raise RuntimeError('Unexpected symlink in program release')
             path.chmod(0o755 if path.parent==target/'bin' else 0o644)
 
-def unit_files():
+def unit_files(endpoint=None):
     hardening = 'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nUMask=0077\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n'
     core_hardening = hardening.replace('AF_INET AF_INET6 AF_UNIX', 'AF_INET AF_INET6 AF_UNIX AF_NETLINK')
-    return {
+    units = {
         'connect-core-network.service': '[Unit]\nDescription=CONNECT owned TUN and scoped rules\nAfter=network-online.target\nWants=network-online.target\nBefore=connect-core.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/python3 /opt/connect-core/current/scripts/connect-vps-network.py apply /var/lib/connect-core-installer/network.json\nExecStop=/usr/bin/python3 /opt/connect-core/current/scripts/connect-vps-network.py rollback /var/lib/connect-core-installer/network.json\n\n[Install]\nWantedBy=multi-user.target\n',
         'connect-core.service': '[Unit]\nDescription=CONNECT Core control and IP v2 server\nRequires=connect-core-network.service\nAfter=connect-core-network.service\n\n[Service]\nUser=connectcore\nSupplementaryGroups=connectadmin\nExecStart=/opt/connect-core/current/bin/connect-control serve /var/lib/connect-core/control/control.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=20\n' + core_hardening + 'ReadWritePaths=/var/lib/connect-core/control\nCapabilityBoundingSet=\nDevicePolicy=closed\nDeviceAllow=/dev/net/tun rw\n\n[Install]\nWantedBy=multi-user.target\n',
         'connect-ui.service': '[Unit]\nDescription=CONNECT UI public HTTPS panel\nAfter=connect-core.service\n\n[Service]\nUser=connectui\nSupplementaryGroups=connectadmin\nExecStart=/opt/connect-core/current/bin/connect-ui serve /etc/connect-core/ui.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=20\n' + hardening + 'AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n\n[Install]\nWantedBy=multi-user.target\n',
     }
+    if endpoint is not None:
+        units['connect-core.service']=units['connect-core.service'].replace('Requires=connect-core-network.service\n','Requires=connect-core-network.service connect-core.socket\n').replace('After=connect-core-network.service\n','After=connect-core-network.service connect-core.socket\n')
+        units['connect-core.socket']='[Unit]\nDescription=CONNECT owned buffered UDP socket\nRequires=connect-core-network.service\nAfter=connect-core-network.service\n\n[Socket]\nListenDatagram='+endpoint+'\nReceiveBuffer=8M\nSendBuffer=8M\nFileDescriptorName=connect-data\nService=connect-core.service\n\n[Install]\nWantedBy=sockets.target\n'
+    return units
+
 
 def panel_url(m):
     if not m.get('public_https'): return 'http://127.0.0.1:' + str(m['panel_port'])
@@ -237,6 +242,9 @@ def health(m, password=None):
             req = urllib.request.Request('http://' + config['listen'] + '/v1/status', headers={'Authorization': 'Bearer ' + token})
             with opener.open(req, timeout=2) as response: status = json.load(response)
             if status['api_version'] != 1 or status['status'] != 'running': raise RuntimeError('real server not ready')
+            if m.get('socket_activation'):
+                buffers=status.get('udp_buffers',{})
+                if min(buffers.get('receive_bytes',0),buffers.get('send_bytes',0))<7*1024*1024: raise RuntimeError('Owned UDP socket buffers were not applied; keeping previous installation')
             origin = panel_url(m)
             with opener.open(origin, timeout=2) as response:
                 if response.status != 200 or b'CONNECT' not in response.read(65536): raise RuntimeError('panel not ready')
@@ -329,7 +337,8 @@ def verify_owned(m):
 
 def rollback_install(m):
     verify_owned(m)
-    for name in reversed(NAMES): run('systemctl', 'stop', name, check=False); run('systemctl', 'disable', name, check=False)
+    for name in reversed(NAMES):
+        if name in m.get('unit_hashes',{}): run('systemctl', 'stop', name, check=False); run('systemctl', 'disable', name, check=False)
     if (JOURNAL / 'network-journal.json').exists():
         run('/usr/bin/python3', str(ROOT / 'current' / 'scripts' / 'connect-vps-network.py'), 'rollback', str(JOURNAL / 'network.json'))
     for name in m.get('unit_hashes', {}): (UNITS / name).unlink(missing_ok=True)
@@ -401,13 +410,13 @@ def install(args, revision, release):
             os.chown(directory, m['uids']['connectcore'], admin_gid)
             for filename in files: os.chown(pathlib.Path(directory) / filename, m['uids']['connectcore'], admin_gid)
         settings['uid'] = m['uids']['connectcore']; save(JOURNAL / 'network.json', settings)
-        units=unit_files()
+        units=unit_files(args.endpoint);m['socket_activation']=True
         units['connect-ui-cert.service']='[Unit]\nDescription=Renew CONNECT public IP HTTPS certificate\nAfter=network-online.target connect-core.service\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /opt/connect-core/current/scripts/connect-install.py renew-cert\nUMask=0077\n'
         units['connect-ui-cert.timer']='[Unit]\nDescription=Check CONNECT short-lived HTTPS certificate hourly\n\n[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=1h\nRandomizedDelaySec=5min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n'
         for name, body in units.items():
             (UNITS / name).write_text(body); (UNITS / name).chmod(0o644); m['unit_hashes'][name] = sha(UNITS / name); save(JOURNAL / 'manifest.json', m)
         run('systemctl', 'daemon-reload')
-        for name in RUNTIME_NAMES[:2]: run('systemctl','enable',name); run('systemctl','start',name)
+        for name in ['connect-core-network.service','connect-core.socket','connect-core.service']: run('systemctl','enable',name); run('systemctl','start',name)
         print('Obtaining trusted public IP HTTPS certificate...',flush=True)
         certificate_issue(m)
         run('systemctl','enable','connect-ui.service'); run('systemctl','start','connect-ui.service')
@@ -428,7 +437,7 @@ def install(args, revision, release):
         raise
 
 def start_owned(name):
-    if name not in RUNTIME_NAMES: raise RuntimeError('Refusing to reset/start a foreign service')
+    if name not in RUNTIME_NAMES+['connect-core.socket']: raise RuntimeError('Refusing to reset/start a foreign service')
     # An intentional failed update may exhaust systemd's start-rate limit.
     # Reset only the owned service before an explicit recovery/release switch;
     # leave automatic restart limiting in force during normal operation.
@@ -488,6 +497,33 @@ def change_panel_port(m, requested):
         value=json.loads(access.read_text());value['panel']=panel_url(m);save(access,value)
     print('Panel: '+panel_url(m))
 
+def prepare_socket_migration(m):
+    if m.get('socket_activation'): return None
+    if (UNITS/'connect-core.socket').exists(): raise RuntimeError('Unowned connect-core.socket exists; refusing adoption')
+    settings=json.loads((JOURNAL/'network.json').read_text())
+    if settings.get('owner')!=m['owner']: raise RuntimeError('Network ownership mismatch')
+    return {'core':(UNITS/'connect-core.service').read_bytes(),'hashes':dict(m['unit_hashes']),'units':unit_files(settings['endpoint']),'created':False}
+
+def apply_socket_migration(m,backup):
+    if backup is None: return
+    fd=os.open(UNITS/'connect-core.socket',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o644)
+    backup['created']=True
+    with os.fdopen(fd,'w') as f: f.write(backup['units']['connect-core.socket'])
+    (UNITS/'connect-core.service').write_text(backup['units']['connect-core.service'])
+    for name in ['connect-core.socket','connect-core.service']:
+        (UNITS/name).chmod(0o644);m['unit_hashes'][name]=sha(UNITS/name)
+    m['socket_activation']=True;save(JOURNAL/'manifest.json',m)
+    run('systemctl','daemon-reload');run('systemctl','enable','connect-core.socket');start_owned('connect-core.socket')
+
+def undo_socket_migration(m,backup):
+    if backup is None: return
+    if backup['created']:
+        run('systemctl','stop','connect-core.socket',check=False);run('systemctl','disable','connect-core.socket',check=False)
+        (UNITS/'connect-core.socket').unlink(missing_ok=True)
+    (UNITS/'connect-core.service').write_bytes(backup['core']);(UNITS/'connect-core.service').chmod(0o644)
+    m['unit_hashes']=backup['hashes'];m.pop('socket_activation',None);save(JOURNAL/'manifest.json',m)
+    run('systemctl','daemon-reload')
+
 def update(args, m, revision, release):
     verify_owned(m)
     certificate_source=getattr(args,'tls_cert',None);key_source=getattr(args,'tls_key',None)
@@ -507,16 +543,19 @@ def update(args, m, revision, release):
     # could undo newer certificate revocations.
     try:
         target_version=run(str(target/'bin'/'connect-control'),'version').stdout.strip()
-        if (m['panel_port'] not in (80,443) or m.get('tls_source')) and target_version in ('0.2.0','0.2.1','0.2.2','0.2.3','0.2.4'):
+        if (m['panel_port'] not in (80,443) or m.get('tls_source') or m.get('socket_activation')) and target_version in ('0.2.0','0.2.1','0.2.2','0.2.3','0.2.4'):
             raise RuntimeError('Target installer cannot renew certificates on a custom panel port; keeping current installation')
         checked = run(str(target / 'bin' / 'connect-control'), 'check', str(STATE / 'control' / 'control.json')).stdout.strip()
         if checked != 'api_version=1 state_version=1 invitations_version=1':
             raise RuntimeError('Unrecognized persisted-state compatibility contract')
     except BaseException:
         shutil.rmtree(target); raise
+    try: migration=prepare_socket_migration(m)
+    except BaseException: shutil.rmtree(target);raise
     for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name)
     try:
         next_link = ROOT / 'current.next'; next_link.symlink_to(target); os.replace(next_link, ROOT / 'current')
+        apply_socket_migration(m,migration)
         for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m)
         interfaces=json.loads(run('ip','-j','-d','link','show','dev','cc-vps0').stdout)
@@ -525,6 +564,7 @@ def update(args, m, revision, release):
         run('ip','link','set','dev','cc-vps0','txqueuelen','4096')
     except BaseException:
         for name in ['connect-ui.service', 'connect-core.service']: run('systemctl', 'stop', name, check=False)
+        undo_socket_migration(m,migration)
         next_link = ROOT / 'current.next'; next_link.unlink(missing_ok=True); next_link.symlink_to(old); os.replace(next_link, ROOT / 'current')
         for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
         health(m); shutil.rmtree(target); raise
