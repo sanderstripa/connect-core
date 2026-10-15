@@ -51,7 +51,12 @@ type QueuedPacket struct {
 }
 
 func (s *Stats) Report(w io.Writer) {
-	fmt.Fprintf(w, "CONNECT drop reasons: policy=%d queue_full=%d inactive=%d wintun=%d\n", s.PolicyDrops.Load(), s.QueueDrops.Load(), s.InactiveDrops.Load(), s.RingDrops.Load())
+	policy, queue, inactive, ring := s.PolicyDrops.Load(), s.QueueDrops.Load(), s.InactiveDrops.Load(), s.RingDrops.Load()
+	var other uint64
+	if total := s.Dropped.Load(); total > policy+queue+inactive+ring {
+		other = total - policy - queue - inactive - ring
+	}
+	fmt.Fprintf(w, "CONNECT drop reasons: policy=%d queue_capacity=%d inactive=%d wintun=%d other=%d\n", policy, queue, inactive, ring, other)
 	s.NativeQueue.Report(w, "native_queue")
 	s.ReceiveQueue.Report(w, "receive_queue")
 	s.SendQueue.Report(w, "server_send_queue")

@@ -199,6 +199,7 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""], helperPID: helperPID}
 	success = true
 	go b.read()
+	go b.reportCPU()
 	return b, nil
 }
 func (b *nativeBridge) read() {
