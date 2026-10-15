@@ -113,19 +113,22 @@ try{
  function MeasureNativeDuplex([string]$label) {
   $helper=[Diagnostics.Process]::GetProcessById($client.Helper)
   $client.Process.Refresh();$helper.Refresh()
+  $vm.Refresh();$guestCpu=$vm.TotalProcessorTime.TotalMilliseconds
   $workerCpu=$client.Process.TotalProcessorTime.TotalMilliseconds;$helperCpu=$helper.TotalProcessorTime.TotalMilliseconds
   $clock=[Diagnostics.Stopwatch]::StartNew()
   python "$PSScriptRoot/ip-lab-services.py" throughput | Set-Content (Join-Path $out ($label+'-throughput-measurements.json'))
   if($LASTEXITCODE){throw ('Native duplex throughput failed: '+$label)}
-  $clock.Stop();$client.Process.Refresh();$helper.Refresh()
-  @{scope='disposable Windows Wintun + Linux QEMU, not public VPS';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
+  $clock.Stop();$client.Process.Refresh();$helper.Refresh();$vm.Refresh()
+  @{scope='disposable Windows Wintun + Linux QEMU, not public VPS';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;guest_qemu_cpu_ms=$vm.TotalProcessorTime.TotalMilliseconds-$guestCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
  }
  MeasureNativeDuplex 'candidate'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Candidate shutdown before comparison hung'}
+ $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'candidate-stage-measurements.log')
  $client=[CorePipe]::new((Join-Path $root 'build/native-baseline/connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
  MeasureNativeDuplex 'released-025'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Baseline shutdown after comparison hung'}
+ $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-025-stage-measurements.log')
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
  $guestWriter.WriteLine('latency-clear');AwaitGuest '^LAB_LATENCY_CLEAR$'

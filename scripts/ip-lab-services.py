@@ -97,10 +97,10 @@ def exchange(port, data, host=HOST, barrier=None):
         sock.sendto(data, (host, port))
         return sock.recv(4096)
 
-def tcp_echo(size, host=HOST, port=18083, barrier=None):
+def tcp_echo(size, host=HOST, port=18083, barrier=None, timeout=10):
     data = bytes(range(256)) * (size // 256)
     start = time.perf_counter()
-    with socket.create_connection((host, port), timeout=10) as sock:
+    with socket.create_connection((host, port), timeout=timeout) as sock:
         if barrier is not None:
             barrier.wait(timeout=10)  # All N established sockets overlap.
         # Read while sending. Writing a large payload before reading its echo
@@ -113,7 +113,7 @@ def tcp_echo(size, host=HOST, port=18083, barrier=None):
                     chunk = sock.recv(65536)
                     assert chunk, "premature TCP EOF"
                     out.extend(chunk)
-                sender.result(timeout=10)
+                sender.result(timeout=timeout)
             except BaseException:
                 sock.close()  # Unblock sender before the executor joins it.
                 raise
@@ -166,7 +166,7 @@ def throughput():
     with concurrent.futures.ThreadPoolExecutor(max_workers=streams+1) as pool:
         probe=pool.submit(latency)
         try:
-            durations=list(pool.map(lambda _: tcp_echo(size,barrier=gate),range(streams)))
+            durations=list(pool.map(lambda _: tcp_echo(size,barrier=gate,timeout=30),range(streams)))
         finally:
             stop.set()
         probe.result()
