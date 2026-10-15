@@ -209,11 +209,19 @@ func (b *nativeBridge) read() {
 		if e != nil {
 			return
 		}
-		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32) {
-			if len(p) == 32 {
+		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32 || len(p) == 56) {
+			if len(p) >= 32 {
 				b.stats.Dropped.Add(binary.LittleEndian.Uint64(p[24:]))
 				b.stats.RingDrops.Add(binary.LittleEndian.Uint64(p[24:]))
 				fmt.Fprintf(os.Stderr, "CONNECT Wintun ring drops: packets=%d\n", binary.LittleEndian.Uint64(p[24:]))
+			}
+			if len(p) == 56 {
+				count := binary.LittleEndian.Uint64(p[48:])
+				var average uint64
+				if count > 0 {
+					average = binary.LittleEndian.Uint64(p[32:]) / count / 1000
+				}
+				fmt.Fprintf(os.Stderr, "CONNECT helper pipe: packets=%d average_us=%d max_us=%d\n", count, average, binary.LittleEndian.Uint64(p[40:])/1000)
 			}
 			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
 			continue

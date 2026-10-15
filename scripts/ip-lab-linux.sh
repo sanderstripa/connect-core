@@ -128,6 +128,10 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
       done
     done
   done
+  # Flush final per-session stage measurements before namespace cleanup sends
+  # SIGTERM. Go handles SIGINT gracefully; SIGTERM intentionally has no handler.
+  kill -INT "$clientpid"; wait "$clientpid" || true
+  kill -INT "$serverpid"; wait "$serverpid" || true
   python3 - "$artifacts" "$rate" <<'PY'
 import json,pathlib,sys,statistics,re
 p=pathlib.Path(sys.argv[1]);rows=[]
