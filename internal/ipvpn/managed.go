@@ -73,11 +73,7 @@ func (v *packetView) Read(b []byte) (int, error) {
 			e := v.hub.err
 			v.hub.mu.Unlock()
 			return 0, e
-		case <-v.packets.Ready():
-			p, ok := v.packets.Pop()
-			if !ok {
-				continue
-			}
+		case p := <-v.packets.Ready():
 			v.hub.stats.NativeQueue.End(p.At)
 			return copy(b, p.Data), nil
 		}

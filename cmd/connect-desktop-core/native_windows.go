@@ -286,11 +286,7 @@ func (v *nativeView) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		case <-v.bridge.done:
 			return 0, io.EOF
-		case <-v.packets.Ready():
-			queued, ok := v.packets.Pop()
-			if !ok {
-				continue
-			}
+		case queued := <-v.packets.Ready():
 			v.bridge.stats.NativeQueue.End(queued.At)
 			pkt := queued.Data
 			src, _, err := ipvpn.Packet(pkt)

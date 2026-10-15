@@ -157,11 +157,7 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 			case <-c.Context().Done():
 				result <- context.Cause(c.Context())
 				return
-			case <-incoming.Ready():
-				queued, ok := incoming.Pop()
-				if !ok {
-					continue
-				}
+			case queued := <-incoming.Ready():
 				stats.ReceiveQueue.End(queued.At)
 				pkt := queued.Data
 				start := stats.DeviceWrite.Begin()
@@ -396,11 +392,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					select {
 					case <-c.Context().Done():
 						return
-					case <-p.queue.Ready():
-						queued, ok := p.queue.Pop()
-						if !ok {
-							continue
-						}
+					case queued := <-p.queue.Ready():
 						stats.SendQueue.End(queued.At)
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))
@@ -427,11 +419,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					select {
 					case <-c.Context().Done():
 						return
-					case <-p.incoming.Ready():
-						queued, ok := p.incoming.Pop()
-						if !ok {
-							continue
-						}
+					case queued := <-p.incoming.Ready():
 						stats.ReceiveQueue.End(queued.At)
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))
