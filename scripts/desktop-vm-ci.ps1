@@ -104,6 +104,7 @@ try{
  $profile=Join-Path $out 'private-client.json';$cfg | ConvertTo-Json -Depth 10 | Set-Content $profile -Encoding utf8NoBOM
  $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  netsh wfp set options netevents=on | Out-Null
+ $guestWriter.WriteLine('latency-80');AwaitGuest '^LAB_LATENCY_80$'
  $client.Send(1,$profile);AwaitCore 1 10;$client.Send(2);AwaitCore 3
  if($client.Mode -ne 1){throw 'System Wintun mode not active'}
  Write-Output 'REAL_WINDOWS_WINTUN_SYSTEM_ROUTES_READY'
@@ -119,7 +120,6 @@ try{
   $clock.Stop();$client.Process.Refresh();$helper.Refresh()
   @{scope='disposable Windows Wintun + Linux QEMU, not public VPS';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
  }
- $guestWriter.WriteLine('latency-80');AwaitGuest '^LAB_LATENCY_80$'
  MeasureNativeDuplex 'candidate'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Candidate shutdown before comparison hung'}
  $client=[CorePipe]::new((Join-Path $root 'build/native-baseline/connect-desktop-core.exe'),(Join-Path $out 'private-profile'))

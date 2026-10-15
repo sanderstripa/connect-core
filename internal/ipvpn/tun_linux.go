@@ -59,7 +59,10 @@ func openLinux(name string, owned bool) (Device, error) {
 	if e = unix.IoctlIfreq(socket, unix.SIOCSIFMTU, req); e != nil {
 		return fail(e)
 	}
-	req.SetUint32(PacketQueueSize)
+	// Keep the OS burst queue separate from the bounded application queues.
+	// Shrinking this simultaneously makes kernel drops confound queue-latency tests.
+	// Managed VPS interfaces already use this same installer-owned value.
+	req.SetUint32(4096)
 	if e = unix.IoctlIfreq(socket, unix.SIOCSIFTXQLEN, req); e != nil {
 		return fail(e)
 	}
