@@ -1,6 +1,9 @@
 package ipvpn
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type flowKey [13]byte
 type queueSlot struct {
@@ -20,6 +23,7 @@ type PacketQueue struct {
 	flows                                   map[flowKey]*flowQueue
 	active                                  []flowKey
 	head, activeCount, count, free, reserve int
+	samples                                 uint64
 }
 
 func NewPacketQueue(capacity int) *PacketQueue {
@@ -65,6 +69,11 @@ func (q *PacketQueue) Push(packet QueuedPacket) bool {
 		return false
 	}
 	index := q.free
+	q.samples++
+	packet.At = time.Time{}
+	if q.samples%timingSampleEvery == 0 {
+		packet.At = time.Now()
+	}
 	q.free = q.slots[index].next
 	q.slots[index] = queueSlot{packet: packet, next: -1}
 	if flow == nil {

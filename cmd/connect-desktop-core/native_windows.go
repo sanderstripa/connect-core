@@ -221,7 +221,7 @@ func (b *nativeBridge) read() {
 				if count > 0 {
 					average = binary.LittleEndian.Uint64(p[32:]) / count / 1000
 				}
-				fmt.Fprintf(os.Stderr, "CONNECT helper pipe: packets=%d average_us=%d max_us=%d\n", count, average, binary.LittleEndian.Uint64(p[40:])/1000)
+				fmt.Fprintf(os.Stderr, "CONNECT helper pipe: sampled_packets=%d sample_every=64 average_us=%d max_us=%d\n", count, average, binary.LittleEndian.Uint64(p[40:])/1000)
 			}
 			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
 			continue
@@ -238,7 +238,7 @@ func (b *nativeBridge) read() {
 		}
 		b.mu.Lock()
 		if b.active != nil {
-			if !b.active.packets.Push(ipvpn.QueuedPacket{Data: p, At: time.Now()}) {
+			if !b.active.packets.Push(ipvpn.QueuedPacket{Data: p}) {
 				b.stats.QueueDrops.Add(1)
 				b.stats.Dropped.Add(1)
 			}
@@ -268,7 +268,7 @@ func (v *nativeView) Read(p []byte) (int, error) {
 			if !ok {
 				continue
 			}
-			v.bridge.stats.NativeQueue.Observe(time.Since(queued.At))
+			v.bridge.stats.NativeQueue.End(queued.At)
 			pkt := queued.Data
 			src, _, err := ipvpn.Packet(pkt)
 			reason := ""

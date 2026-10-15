@@ -139,6 +139,9 @@ try{
  # Compare the released Windows binaries and this candidate on the SAME live
  # guest, Wintun, full-system policy and TCP fixture. Pipe-only tests miss this.
  function MeasureNativeDuplex([string]$label) {
+  $networkStats=[Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+  $udpErrors=$networkStats.GetUdpIPv4Statistics().IncomingDatagramsWithErrors
+  $tcpRetransmits=$networkStats.GetTcpIPv4Statistics().SegmentsResent
   $helper=[Diagnostics.Process]::GetProcessById($client.Helper)
   $client.Process.Refresh();$helper.Refresh()
   $vm.Refresh();$guestCpu=$vm.TotalProcessorTime.TotalMilliseconds
@@ -147,7 +150,7 @@ try{
   python "$PSScriptRoot/ip-lab-services.py" throughput | Set-Content (Join-Path $out ($label+'-throughput-measurements.json'))
   if($LASTEXITCODE){throw ('Native duplex throughput failed: '+$label)}
   $clock.Stop();$client.Process.Refresh();$helper.Refresh();$vm.Refresh()
-  @{scope='disposable Windows Wintun + Linux QEMU, not public VPS';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;guest_qemu_cpu_ms=$vm.TotalProcessorTime.TotalMilliseconds-$guestCpu} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
+  @{scope='disposable Windows Wintun + Linux QEMU, not public VPS; host counters include background traffic';wall_ms=$clock.Elapsed.TotalMilliseconds;worker_cpu_ms=$client.Process.TotalProcessorTime.TotalMilliseconds-$workerCpu;helper_cpu_ms=$helper.TotalProcessorTime.TotalMilliseconds-$helperCpu;guest_qemu_cpu_ms=$vm.TotalProcessorTime.TotalMilliseconds-$guestCpu;host_udp_errors_delta=$networkStats.GetUdpIPv4Statistics().IncomingDatagramsWithErrors-$udpErrors;host_tcp_retransmits_delta=$networkStats.GetTcpIPv4Statistics().SegmentsResent-$tcpRetransmits} | ConvertTo-Json | Set-Content (Join-Path $out ($label+'-cpu-measurements.json'))
  }
  MeasureNativeDuplex 'candidate'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Candidate shutdown before comparison hung'}

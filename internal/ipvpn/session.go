@@ -135,9 +135,9 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 				stats.Dropped.Add(1)
 				continue
 			}
-			start := time.Now()
+			start := stats.DatagramSend.Begin()
 			e = c.SendDatagram(pkt)
-			stats.DatagramSend.Observe(time.Since(start))
+			stats.DatagramSend.End(start)
 			if e != nil {
 				result <- e
 				return
@@ -161,11 +161,11 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 				if !ok {
 					continue
 				}
-				stats.ReceiveQueue.Observe(time.Since(queued.At))
+				stats.ReceiveQueue.End(queued.At)
 				pkt := queued.Data
-				start := time.Now()
+				start := stats.DeviceWrite.Begin()
 				n, e := d.Write(pkt)
-				stats.DeviceWrite.Observe(time.Since(start))
+				stats.DeviceWrite.End(start)
 				if e != nil {
 					result <- e
 					return
@@ -221,7 +221,7 @@ func receiveToQueue(ctx context.Context, c *quic.Conn, p Policy, stats *Stats, o
 			stats.Dropped.Add(1)
 			continue
 		}
-		if !out.Push(QueuedPacket{Data: packet, At: time.Now()}) {
+		if !out.Push(QueuedPacket{Data: packet}) {
 			if budget != nil {
 				budget.Add(-size)
 			}
@@ -291,7 +291,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					stats.QueueDrops.Add(1)
 					stats.Dropped.Add(1)
 				} else {
-					if !p.queue.Push(QueuedPacket{Data: append([]byte(nil), pkt...), At: time.Now()}) {
+					if !p.queue.Push(QueuedPacket{Data: append([]byte(nil), pkt...)}) {
 						queuedPayload.Add(-size)
 						stats.QueueDrops.Add(1)
 						stats.Dropped.Add(1)
@@ -400,13 +400,13 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 						if !ok {
 							continue
 						}
-						stats.SendQueue.Observe(time.Since(queued.At))
+						stats.SendQueue.End(queued.At)
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))
 						if control.Transfer(pin, false, len(pkt), func() error {
-							start := time.Now()
+							start := stats.DatagramSend.Begin()
 							err := c.SendDatagram(pkt)
-							stats.DatagramSend.Observe(time.Since(start))
+							stats.DatagramSend.End(start)
 							return err
 						}) != nil {
 							_ = c.CloseWithError(1, "send failed")
@@ -431,15 +431,15 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 						if !ok {
 							continue
 						}
-						stats.ReceiveQueue.Observe(time.Since(queued.At))
+						stats.ReceiveQueue.End(queued.At)
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))
 						err := control.Transfer(pin, true, len(pkt), func() error {
 							writeMu.Lock()
 							defer writeMu.Unlock()
-							start := time.Now()
+							start := stats.DeviceWrite.Begin()
 							n, err := d.Write(pkt)
-							stats.DeviceWrite.Observe(time.Since(start))
+							stats.DeviceWrite.End(start)
 							if err == nil && n != len(pkt) {
 								return io.ErrShortWrite
 							}

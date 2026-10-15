@@ -45,7 +45,7 @@ func newHub(d Device, stats *Stats) *packetHub {
 				stats.InactiveDrops.Add(1)
 				stats.Dropped.Add(1)
 			} else {
-				if !v.packets.Push(QueuedPacket{Data: append([]byte{}, b[:n]...), At: time.Now()}) {
+				if !v.packets.Push(QueuedPacket{Data: append([]byte{}, b[:n]...)}) {
 					stats.QueueDrops.Add(1)
 					stats.Dropped.Add(1)
 				}
@@ -78,7 +78,7 @@ func (v *packetView) Read(b []byte) (int, error) {
 			if !ok {
 				continue
 			}
-			v.hub.stats.NativeQueue.Observe(time.Since(p.At))
+			v.hub.stats.NativeQueue.End(p.At)
 			return copy(b, p.Data), nil
 		}
 	}

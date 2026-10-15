@@ -10,6 +10,23 @@ import (
 // Timing measures local waiting only. It never records addresses or payloads.
 type Timing struct {
 	count, nanos, maximum, over1ms, over10ms, over50ms atomic.Uint64
+	attempts                                           atomic.Uint64
+}
+
+// Sample timing to keep diagnostics from dominating the packet hot path.
+// Drop counters remain exact and are never sampled.
+const timingSampleEvery = 64
+
+func (t *Timing) Begin() time.Time {
+	if t.attempts.Add(1)%timingSampleEvery != 0 {
+		return time.Time{}
+	}
+	return time.Now()
+}
+func (t *Timing) End(start time.Time) {
+	if !start.IsZero() {
+		t.Observe(time.Since(start))
+	}
 }
 
 func (t *Timing) Observe(d time.Duration) {
@@ -41,7 +58,7 @@ func (t *Timing) Report(w io.Writer, name string) {
 	if count > 0 {
 		average = t.nanos.Load() / count
 	}
-	fmt.Fprintf(w, "CONNECT stage: name=%s samples=%d average_us=%d max_us=%d over_1ms=%d over_10ms=%d over_50ms=%d\n", name, count, average/1000, t.maximum.Load()/1000, t.over1ms.Load(), t.over10ms.Load(), t.over50ms.Load())
+	fmt.Fprintf(w, "CONNECT stage: name=%s sample_every=%d samples=%d average_us=%d max_us=%d over_1ms=%d over_10ms=%d over_50ms=%d\n", name, timingSampleEvery, count, average/1000, t.maximum.Load()/1000, t.over1ms.Load(), t.over10ms.Load(), t.over50ms.Load())
 }
 
 // QueuedPacket timestamps application queues without changing wire/IPC framing.
