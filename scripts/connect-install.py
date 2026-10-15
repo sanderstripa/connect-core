@@ -62,8 +62,8 @@ def dependencies():
     if missing: raise RuntimeError('Missing dependencies: '+', '.join(missing))
 
 def check_ports(ports):
-    if len(set(ports)) != len(ports) or any((p < 1024 and p not in (80, 443)) or p > 65535 for p in ports):
-        raise RuntimeError('Ports must be distinct: 80/443 for public HTTPS or 1024..65535')
+    if len(set(ports)) != len(ports) or any(p < 1 or p > 65535 for p in ports):
+        raise RuntimeError('Ports must be distinct and in 1..65535')
     output = run('ss', '-H', '-lntu').stdout
     for line in output.splitlines():
         fields = line.split()
@@ -121,11 +121,18 @@ def prepare_install(args):
     data_port = int(port) if not automatic_endpoint else choose(None, 17444, socket.SOCK_DGRAM)
     args.endpoint = str(ipaddress.IPv4Address(address)) + ':' + str(data_port)
     if args.panel_port is None:
-        for candidate in (443, 80):
-            try: args.panel_port = choose(candidate, 0, socket.SOCK_STREAM); break
-            except (RuntimeError, OSError): continue
-        if args.panel_port is None: raise RuntimeError('Both 443 and 80 are occupied; cannot validate an IP certificate without touching another service')
-    if args.panel_port not in (443, 80): raise RuntimeError('Public IP HTTPS requires an unused panel port 443 or 80')
+        args.panel_port = choose(None, 17890, socket.SOCK_STREAM)
+    args.acme_port = None
+    for candidate in (443, 80):
+        if candidate in used and candidate != args.panel_port: continue
+        try:
+            check_ports({candidate:socket.SOCK_STREAM})
+            args.acme_port = candidate
+            break
+        except (RuntimeError,OSError): continue
+    if args.acme_port is None:
+        raise RuntimeError('Both 443 and 80 are occupied; the panel supports any port but automatic IP certificate validation needs one free ACME port. No neighbor service will be stopped')
+    used[args.acme_port] = socket.SOCK_STREAM
     for name, default in [('control_port', 17891), ('enrollment_port', 17900)]:
         if getattr(args, name) is None: setattr(args, name, choose(None, default, socket.SOCK_STREAM))
     if not args.pool:
@@ -265,8 +272,16 @@ def certificate_issue(m):
     tls_root = CONFIG / 'panel-tls'; tls_root.mkdir(mode=0o750, exist_ok=True); tls_root.chmod(0o750)
     admin_gid = int(run('getent', 'group', GROUP).stdout.split(':')[2]); os.chown(tls_root,0,admin_gid)
     stage = tls_root / ('cert-' + uuid.uuid4().hex); stage.mkdir(mode=0o700)
+    challenge_port = m.get('acme_port',m['panel_port'])
+    # ACME listeners are temporary and independent of the HTTPS panel port.
+    # Bind/preflight first; never stop or take over a neighbor's listener.
+    check_ports({challenge_port:socket.SOCK_STREAM})
+    rule=['-p','tcp','-d',m['panel_ip'],'--dport',str(challenge_port),'-m','comment','--comment','connect-acme:'+m['owner'],'-j','ACCEPT']
+    opened=False
     try:
-        run(str(ROOT/'current'/'bin'/'connect-cert'),m['panel_ip'],str(STATE/'acme'),str(stage),str(m['panel_port']),m['acme_directory'],env=dict(os.environ,LEGO_CA_CERTIFICATES=m['test_ca']) if m.get('test_ca') else None)
+        if challenge_port != m['panel_port']:
+            run('iptables','-w','5','-I','INPUT','1',*rule);opened=True
+        run(str(ROOT/'current'/'bin'/'connect-cert'),m['panel_ip'],str(STATE/'acme'),str(stage),str(m.get('acme_port',m['panel_port'])),m['acme_directory'],env=dict(os.environ,LEGO_CA_CERTIFICATES=m['test_ca']) if m.get('test_ca') else None)
         # Verify IP SAN, chain and expiry against system trust, never curl -k.
         run('openssl','verify','-verify_ip',m['panel_ip'],'-purpose','sslserver','-untrusted',str(stage/'cert.pem'),*(['-CAfile',m['test_ca']] if m.get('test_ca') else []),str(stage/'cert.pem'))
         stage.chmod(0o750); os.chown(stage,0,admin_gid)
@@ -276,15 +291,20 @@ def certificate_issue(m):
         if previous and previous.parent==tls_root: shutil.rmtree(previous)
     except BaseException:
         shutil.rmtree(stage); raise
+    finally:
+        if opened: run('iptables','-w','5','-D','INPUT',*rule)
 
 def renew_certificate(m):
     verify_owned(m)
     if not m.get('public_https'): return
     cert=CONFIG/'panel-tls'/'current'/'cert.pem'
     if run('openssl','x509','-checkend',str(72*3600),'-noout','-in',str(cert),check=False).returncode==0: return
-    run('systemctl','stop','connect-ui.service')
+    shared=m.get('acme_port',m['panel_port'])==m['panel_port']
+    if shared: run('systemctl','stop','connect-ui.service')
     try: certificate_issue(m)
-    finally: start_owned('connect-ui.service')
+    finally:
+        if shared: start_owned('connect-ui.service')
+    if not shared: run('systemctl','restart','connect-ui.service')
     health(m)
     print('CONNECT panel certificate renewed')
 
@@ -337,7 +357,7 @@ def install(args, revision, release):
         if re.search(r'xray|sudoku|x-ui|wireguard|openvpn|vpn', line, re.I): print('  ' + line.split()[0])
     password = secrets.token_urlsafe(24)
     ensure_fresh(); check_ports(ports)  # Recheck after build/operator input.
-    m = {'schema': 1, 'owner': owner, 'revision': revision, 'created_dirs': [], 'uids': {}, 'unit_hashes': {}, 'panel_port': args.panel_port, 'panel_ip':address, 'public_https':True, 'acme_directory':getattr(args,'acme_directory','https://acme-v02.api.letsencrypt.org/directory')}
+    m = {'schema': 1, 'owner': owner, 'revision': revision, 'created_dirs': [], 'uids': {}, 'unit_hashes': {}, 'panel_port': args.panel_port, 'panel_ip':address, 'public_https':True, 'acme_port':args.acme_port, 'acme_directory':getattr(args,'acme_directory','https://acme-v02.api.letsencrypt.org/directory')}
     test_ca=getattr(args,'test_acme_ca',None); test_probe=getattr(args,'test_probe',None)
     if test_ca or test_probe:
         if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('CONNECT_DISPOSABLE_INSTALL_TEST')!='1' or ipaddress.ip_address(address).is_global or not test_ca or not test_probe:

@@ -13,6 +13,15 @@ spec = importlib.util.spec_from_file_location('installer', pathlib.Path(__file__
 installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(installer)
 
 class DiscoveryTests(unittest.TestCase):
+    @patch.object(installer, 'check_ports')
+    @patch.object(installer, 'run')
+    def test_panel_port_is_independent_of_acme(self, run, ports):
+        run.side_effect=self.run_fixture
+        args=self.args(panel_port=24443)
+        installer.prepare_install(args)
+        self.assertEqual(args.panel_port,24443)
+        self.assertEqual(args.acme_port,443)
+
     def args(self, **values):
         defaults = dict(endpoint=None, uplink=None, pool=None, panel_port=None, control_port=None, enrollment_port=None)
         defaults.update(values); return argparse.Namespace(**defaults)
@@ -34,7 +43,8 @@ class DiscoveryTests(unittest.TestCase):
             if 443 in values: raise RuntimeError('neighbor HTTPS')
         ports.side_effect = busy
         args=self.args(); installer.prepare_install(args)
-        self.assertEqual(args.panel_port,80)
+        self.assertEqual(args.panel_port,17890)
+        self.assertEqual(args.acme_port,80)
 
     @patch.object(installer, 'check_ports')
     @patch.object(installer, 'run')
@@ -54,7 +64,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(args.endpoint, '8.8.4.4:17444')
         self.assertEqual(args.uplink, 'eth0')
         self.assertEqual(args.pool, '10.233.0.0/24')
-        self.assertEqual((args.panel_port, args.control_port, args.enrollment_port), (443, 17891, 17900))
+        self.assertEqual((args.panel_port, args.control_port, args.enrollment_port), (17891, 17892, 17900))
 
     @patch.object(installer, 'check_ports')
     @patch.object(installer, 'run')
@@ -69,7 +79,7 @@ class DiscoveryTests(unittest.TestCase):
         args = self.args(control_port=17890, endpoint='127.0.0.1:17444', pool='10.240.0.0/24')
         installer.prepare_install(args)
         self.assertEqual(args.control_port, 17890)
-        self.assertEqual(args.panel_port, 443)
+        self.assertEqual(args.panel_port, 17891)
         self.assertEqual(args.endpoint, '127.0.0.1:17444')
         self.assertEqual(args.pool, '10.240.0.0/24')
 

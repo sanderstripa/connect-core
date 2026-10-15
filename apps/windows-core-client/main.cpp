@@ -26,7 +26,15 @@ template<class T> void release(T*& p){if(p){p->Release();p=nullptr;}}
 std::wstring utf8(const char* p,int n){int len=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,nullptr,0);std::wstring s(len,L' ');if(len)MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,p,n,s.data(),len);return s;}
 bool exactRead(void* data,DWORD size){auto p=static_cast<char*>(data);while(size){DWORD n=0;if(!ReadFile(output,p,size,&n,nullptr)||!n)return false;p+=n;size-=n;}return true;}
 bool command(uint8_t kind,const std::string& payload={}){if(!coreAlive||payload.size()>32768)return false;uint8_t h[8]={'C','C',2,kind};uint32_t len=static_cast<uint32_t>(payload.size());memcpy(h+4,&len,4);DWORD n=0;if(!WriteFile(input,h,8,&n,nullptr)||n!=8)return false;if(len&&(!WriteFile(input,payload.data(),len,&n,nullptr)||n!=len))return false;return true;}
-void addLog(std::wstring s){if(logs.size()==64)logs.erase(logs.begin());logs.push_back(std::move(s));}
+void addLog(std::wstring s){
+ SYSTEMTIME now;GetSystemTime(&now);wchar_t stamp[64];swprintf_s(stamp,L"%04u-%02u-%02uT%02u:%02u:%02uZ ",now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond);
+ if(logs.size()==64)logs.erase(logs.begin());logs.push_back(std::wstring(stamp)+s);
+ // The worker creates this user-only directory. Never create a weaker one here.
+ wchar_t root[32768];DWORD length=GetEnvironmentVariableW(L"LOCALAPPDATA",root,32768);if(!length||length>=32768)return;
+ std::wstring path=std::wstring(root,length)+L"\\ConnectCoreLab\\diagnostics.log";
+ HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return;
+ for(const auto& line:logs){std::wstring text=line+L"\r\n";int n=WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);std::string bytes(n,'\0');WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),bytes.data(),n,nullptr,nullptr);DWORD written;WriteFile(file,bytes.data(),n,&written,nullptr);}CloseHandle(file);
+}
 bool startWorker(){
  wchar_t path[32768];DWORD count=GetModuleFileNameW(nullptr,path,32768);if(!count||count==32768)return false;
  std::wstring exe(path,count);exe=exe.substr(0,exe.find_last_of(L"\\/")+1)+L"connect-desktop-core.exe";
@@ -36,7 +44,7 @@ bool startWorker(){
  if(!CreatePipe(&errorOutput,&childError,&sa,0)){CloseHandle(childIn);CloseHandle(childOut);CloseHandle(input);CloseHandle(output);input=output=nullptr;return false;}
  SetHandleInformation(errorOutput,HANDLE_FLAG_INHERIT,0);
  SetHandleInformation(input,HANDLE_FLAG_INHERIT,0);SetHandleInformation(output,HANDLE_FLAG_INHERIT,0);
- // Only these two private handles may cross into the worker. No global listener.
+ // Only these three private handles may cross into the worker. No global listener.
  SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);std::vector<uint8_t> attributes(bytes);
  STARTUPINFOEXW si{};si.StartupInfo.cb=sizeof(si);si.lpAttributeList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
  bool initialized=InitializeProcThreadAttributeList(si.lpAttributeList,1,0,&bytes)!=FALSE;

@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         # Occupied-port check rejects before accounts/services/interfaces are created.
         occupied=subprocess.run(args+['--panel-port','17889'],capture_output=True,text=True)
         assert occupied.returncode != 0 and not installer.ROOT.exists(), 'occupied port install made system changes'
-        result = subprocess.run(['bash','-o','pipefail','-c','cat "$1" | bash -s -- "${@:2}"','--',str(root/'scripts'/'install-vps.sh'),*args[2:],'--revision',run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()],input='',capture_output=True,text=True)
+        result = subprocess.run(['bash','-o','pipefail','-c','cat "$1" | bash -s -- "${@:2}"','--',str(root/'scripts'/'install-vps.sh'),*args[2:],'--panel-port','443','--revision',run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()],input='',capture_output=True,text=True)
         if result.returncode: raise RuntimeError('real installer failed: '+result.stderr)
         assert (installer.CONFIG/'panel-tls').stat().st_mode & 0o777 == 0o750, 'TLS directory inaccessible to panel group'
         assert (installer.ROOT/'releases').stat().st_mode & 0o777 == 0o755, 'restrictive caller umask blocked release traversal'
@@ -143,14 +143,14 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
                 except OSError: time.sleep(.05)
             import argparse,contextlib,io
             ns=argparse.Namespace(endpoint='198.18.0.2:17444',pool='10.231.0.0/24',uplink='cc-eg0',panel_port=None,control_port=None,enrollment_port=None,yes=True,acme_directory=os.environ['CONNECT_TEST_ACME'],test_acme_ca=os.environ['CONNECT_TEST_CA'],test_probe='connect-install-fixture')
-            installer.prepare_install(ns); assert ns.panel_port==80
+            installer.prepare_install(ns); assert ns.panel_port==17890 and ns.acme_port==80
             with contextlib.redirect_stdout(io.StringIO()): installer.install(ns,'b'*40,release)
             fallback=json.loads((installer.CONFIG/'install-access.json').read_text())
-            origin='https://198.18.0.2:80'
+            origin='https://198.18.0.2:17890'
             assert fallback['panel']==origin and https_neighbor.poll() is None
             csrf=api('/auth/login',{'username':'admin','password':fallback['password']})['csrf']
             assert api('/api/status')['status']=='running'
-            try: urllib.request.urlopen('http://198.18.0.2:80',timeout=5)
+            try: urllib.request.urlopen('http://198.18.0.2:17890',timeout=5)
             except urllib.error.HTTPError as e: assert e.code==400
             else: raise AssertionError('panel accepted plaintext HTTP')
             installer.rollback_install(json.loads((installer.JOURNAL/'manifest.json').read_text()))

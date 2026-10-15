@@ -269,6 +269,11 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			}
 			p := &peer{c, policy, make(chan []byte, 64)}
 			if !control.Admit(pin, func() { _ = c.CloseWithError(4, "access revoked") }) {
+				if control.Busy(pin) {
+					_ = c.CloseWithError(3, "device already active")
+				} else {
+					_ = c.CloseWithError(4, "access denied")
+				}
 				return
 			}
 			defer control.Release(pin)

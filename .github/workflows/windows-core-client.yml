@@ -40,6 +40,12 @@ jobs:
       - run: go build -trimpath -ldflags="-s -w" -o dist/connect-desktop-core.exe ./cmd/connect-desktop-core
       - run: cmake -S apps/windows-core-client -B build/desktop -A x64
       - run: cmake --build build/desktop --config Release
+      - name: Measure real Windows packet pipe before/after
+        shell: pwsh
+        run: |
+          New-Item desktop-vm-artifacts -ItemType Directory -Force | Out-Null
+          ./build/desktop/Release/ConnectCorePipeBench.exe | Tee-Object desktop-vm-artifacts/pipe-performance.json
+          if ($LASTEXITCODE) { throw 'Packet pipe integrity/performance test failed' }
       - run: Copy-Item build/desktop/Release/ConnectCore.exe dist/
       - run: Copy-Item build/desktop/Release/ConnectCoreNetwork.exe dist/
       - name: Verify and package official Wintun
@@ -68,6 +74,7 @@ jobs:
             desktop-vm-artifacts/*measurements.json
             desktop-vm-artifacts/*verification.json
             desktop-vm-artifacts/*probes.json
+            desktop-vm-artifacts/pipe-performance.json
             desktop-vm-artifacts/*adapters.json
             desktop-vm-artifacts/final-routes.json
             desktop-vm-artifacts/final-addresses.json

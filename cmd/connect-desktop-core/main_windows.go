@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/netip"
@@ -331,7 +332,9 @@ func (w *worker) connect() {
 			var policies map[string]ipvpn.Policy
 			policies, e = b.Config.Validate(false)
 			if e == nil {
-				c, err := ipvpn.Dial(ctx, b.Config.Endpoint, t, policies[""].Device)
+				c, err := ipvpn.DialWithRetry(ctx, b.Config.Endpoint, t, policies[""].Device, func(attempt int, delay time.Duration) {
+					fmt.Fprintf(os.Stderr, "CONNECT transient connection retry: attempt=%d delay_ms=%d\n", attempt, delay.Milliseconds())
+				})
 				e = err
 				if e == nil {
 					var d ipvpn.Device

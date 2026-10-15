@@ -208,7 +208,11 @@ func (b *nativeBridge) read() {
 		if e != nil {
 			return
 		}
-		if kind == desktop.NetworkCounters && len(p) == 24 {
+		if kind == desktop.NetworkCounters && (len(p) == 24 || len(p) == 32) {
+			if len(p) == 32 {
+				b.stats.Dropped.Add(binary.LittleEndian.Uint64(p[24:]))
+				fmt.Fprintf(os.Stderr, "CONNECT Wintun ring drops: packets=%d\n", binary.LittleEndian.Uint64(p[24:]))
+			}
 			fmt.Fprintf(os.Stderr, "CONNECT Wintun counters: packets=%d bytes=%d polls=%d\n", binary.LittleEndian.Uint64(p), binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[16:]))
 			continue
 		}

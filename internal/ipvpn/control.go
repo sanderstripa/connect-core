@@ -54,6 +54,12 @@ func (c *Control) Release(pin string) {
 	u.Connected = false
 	c.counters[pin] = u
 }
+
+func (c *Control) Busy(pin string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.denied[pin] && c.sessions[pin] != nil
+}
 func (c *Control) Deny(pin string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
