@@ -163,22 +163,33 @@ func probe() error {
 		return err
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 	p := make([]byte, 1000)
 	copy(p, "CCPERFv1")
-	if _, err = c.Write(p); err != nil {
-		return err
-	}
 	response := make([]byte, 1100)
-	n, err := c.Read(response)
-	if err != nil {
-		return err
+	start := time.Now()
+	// UDP may drop a single packet after overload. Require actual forwarding
+	// within a bounded interval, retaining failed attempts instead of treating
+	// a single lost datagram as proof of a dead tunnel.
+	for attempt := 1; attempt <= 10; attempt++ {
+		_ = c.SetDeadline(time.Now().Add(time.Second))
+		if _, err = c.Write(p); err != nil {
+			return err
+		}
+		n, readErr := c.Read(response)
+		if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
+			fmt.Fprintf(os.Stderr, "post-load probe attempt=%d lost=true\n", attempt)
+			continue
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(p, response[:n]) {
+			return errors.New("post-load probe corrupted")
+		}
+		fmt.Printf("NATIVE_POST_LOAD_FORWARDING_PASSED attempts=%d recovery_ms=%d\n", attempt, time.Since(start).Milliseconds())
+		return nil
 	}
-	if !bytes.Equal(p, response[:n]) {
-		return errors.New("post-load probe corrupted")
-	}
-	fmt.Println("NATIVE_POST_LOAD_FORWARDING_PASSED")
-	return nil
+	return errors.New("no forwarding during ten-second post-load recovery interval")
 }
 
 func main() {
