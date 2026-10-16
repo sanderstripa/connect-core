@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"github.com/sanderstripa/connect-core/internal/lab"

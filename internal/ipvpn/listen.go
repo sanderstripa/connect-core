@@ -3,7 +3,7 @@ package ipvpn
 import (
 	"crypto/tls"
 	"errors"
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
 	"net"
 	"sync"
 )

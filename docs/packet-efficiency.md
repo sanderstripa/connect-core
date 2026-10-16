@@ -1,43 +1,32 @@
-# 0.2.8 packet efficiency work
+# 0.2.8 congestion investigation
 
-Field log supplied 2026-10-16: Windows native egress queue sampled mean
-92,237 us, maximum 1,895,180 us; QUIC enqueue sampled mean 110 us;
-Wintun write mean 10 us, helper IPC mean 9 us. Driver discards/errors and
-helper queue drops are zero in the supplied session. These observations
-identify queued egress delay, not the sole proven throughput bottleneck.
-Fast.com on the same Danish endpoint reported 54/11, 59/12 and 64/7 Mbit/s,
-idle RTT 100–101 ms and loaded RTT 352–536 ms.
+Field observations: 54/11, 59/12 and 64/7 Mbit/s, RTT 100–101 ms idle,
+352–536 ms loaded. Native queue mean 92 ms/max 1.9 s; driver/helper drops
+zero. QUIC reported 221 lost of 963752 sent packets (about 0.023 percent).
+These are observations, not proof of a single root cause.
 
-The released candidate preserves the original bounded FIFO queues. A separate
-TCP ACK priority lane was evaluated and rejected: two paired Linux RTT 80 ms
-runs showed upload decreasing from 333 to 255 Mbit/s (ACK-only) and from 405
-to 315 Mbit/s (ACK + packing). These are limited laboratory comparisons, but
-sufficient negative evidence not to retain ACK scheduling as a default.
-The source/tests of that rejected experiment are removed; no pre-existing
-security or transport test is disabled.
+Rejected experiments, retained in Git history and CI evidence:
+- ACK priority: RTT 80 ms upload 333 -> 255 Mbit/s in one paired run.
+- ACK priority + packing: upload 405 -> 315 Mbit/s.
+- Packing with original FIFO: upload 373 -> 223 Mbit/s.
+Neither scheduler nor custom packing patch is shipped in this candidate.
+The original bounded FIFO and one-packet-per-DATAGRAM behavior are retained.
 
-The remaining change is a small local patch to pinned quic-go v0.62.0. It packs
-up to 16 already queued standard DATAGRAM frames into available QUIC packet
-space, without a batching timer. Subsequent frames that do not fit stay queued.
-TLS, congestion control, frame payloads, packet MTU, mTLS, access control,
-CONNECT ALPN, and the existing FIFO order are unchanged.
+The candidate instead uses the standard paced BBR controller from Xray-core
+v26.10.10 and the exact apernet/quic-go revision pinned by that Xray release.
+The copied BBR/common sources retain MPL-2.0 and original tests. See
+internal/congestion/README.md. TLS 1.3, mTLS, ALPN connect-ip/2, certificate
+leases, packet policy, MTU, guard and routing remain. No fixed-rate Brutal,
+loss-compensation multiplier, Sudoku cipher or masking layer is enabled.
 
-This change reduces packetization overhead for small feedback packets
-without inventing a new encrypted envelope or requiring a peer wire upgrade.
-RFC 9221 section 5 permits frame coalescing. Original QUIC packer and transport
-tests run in CI in addition to CONNECT tests and real disposable VPN tests.
+CI compares immutable 0.2.7 and candidate at RTT 0/80 ms, 40 Mbit/s bottleneck,
+and additionally 80 ms RTT with 0.02 percent loss in each direction. The latter
+is a controlled impairment inspired by the observed packet-loss fraction; it
+is not a reproduction of the user's full network path. Windows tests also
+verify both directions with released 0.2.7 peers and retain all original
+fail-closed, DNS, crash, recovery and capture checks.
 
-The protocol remains CONNECT IPv4 over QUIC/mTLS. Xray's Sudoku finalmask is
-a presentation transform, while upstream Sudoku has its own PSK/session key
-schedule. No upstream handshake, cipher composition or obfuscation is copied
-or claimed implemented here. Bundling those mechanisms does not by itself
-remove the measured queue delay or establish filtering resistance.
-
-Sources inspected: XTLS/Xray-core v26.10.10 transport/internet/finalmask/sudoku/
-config.go; SUDOKU-ASCII/sudoku 4889b53 internal/tunnel/session_keys.go;
-https://www.rfc-editor.org/rfc/rfc9221.html#section-5
-
-A client-only upgrade works with 0.2.7 servers; symmetric server packet packing require updating the CONNECT server as well. No active VPS
-or primary Windows routes/DNS/firewall are changed by this investigation.
-Public throughput improvement must be measured on the user's live path after
-release; disposable CI figures are not substituted for those measurements.
+A client-only upgrade interoperates with 0.2.7 servers; sender-side BBR in both
+directions requires updating CONNECT on the VPS as well. No active VPS or
+primary Windows network is modified by the agent. Public speed improvement
+requires a live same-path retest and is not established by CI numbers.
