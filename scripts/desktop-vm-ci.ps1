@@ -107,9 +107,9 @@ try{
  $componentCfg.endpoint='127.0.0.1:17446'
  $componentProfile=Join-Path $out 'private-component-client.json';$componentCfg | ConvertTo-Json -Depth 10 | Set-Content $componentProfile -Encoding utf8NoBOM
  $componentBinary=Join-Path $root 'build/native-packet-perf.exe'
- # Both clients use the unchanged 0.2.7 protocol backend here, so a client-only
+ # Both clients use the unchanged 0.2.8 protocol backend here, so a client-only
  # upgrade is checked without asking the user to revisit the VPS first.
- $componentInfo=[Diagnostics.ProcessStartInfo]::new((Join-Path $root 'build/native-packet-perf-027.exe'))
+ $componentInfo=[Diagnostics.ProcessStartInfo]::new((Join-Path $root 'build/native-packet-perf-028.exe'))
  $componentInfo.UseShellExecute=$false;$componentInfo.CreateNoWindow=$true
  $componentInfo.RedirectStandardInput=$true;$componentInfo.RedirectStandardOutput=$true;$componentInfo.RedirectStandardError=$true
  $componentInfo.Environment['CONNECT_DISPOSABLE_NATIVE_PERF']='1'
@@ -118,7 +118,7 @@ try{
  try {
   $ready=$componentServer.StandardOutput.ReadLineAsync()
   if(!$ready.Wait(10000) -or $ready.GetAwaiter().GetResult() -ne 'NATIVE_PACKET_REFLECTOR_READY'){throw 'Component reflector unavailable'}
-  foreach($entry in @(@{name='candidate';exe=(Join-Path $dist 'connect-desktop-core.exe')},@{name='released-027';exe=(Join-Path $root 'build/native-baseline/connect-desktop-core.exe')})) {
+  foreach($entry in @(@{name='candidate';exe=(Join-Path $dist 'connect-desktop-core.exe')},@{name='released-028';exe=(Join-Path $root 'build/native-baseline/connect-desktop-core.exe')})) {
    $comparisonHelper=$null;$comparisonHelperStarted=0
    try {
    $client=[CorePipe]::new($entry.exe,(Join-Path $out 'private-profile'))
@@ -137,13 +137,13 @@ try{
    $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Component worker shutdown hung'}
    $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out ($entry.name+'-component-stage-measurements.log'))
    } catch {
-    if($entry.name -ne 'released-027'){throw}
+    if($entry.name -ne 'released-028'){throw}
     # The immutable old release is a comparison, not a gate that can prevent a
     # fixed candidate from passing a newly added overload regression scenario.
     # Preserve its failure; never convert it into a successful speed sample.
-    @{scope='released 0.2.7 comparison failed under new UDP overload';status=$client.Status();measurement_valid=$false} | ConvertTo-Json | Set-Content (Join-Path $out 'released-027-component-failure-measurements.json')
+    @{scope='released 0.2.8 comparison failed under new UDP overload';status=$client.Status();measurement_valid=$false} | ConvertTo-Json | Set-Content (Join-Path $out 'released-028-component-failure-measurements.json')
     if(!$client.Process.HasExited){$client.Process.Kill();$client.Process.WaitForExit()}
-    $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-027-component-stage-measurements.log')
+    $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-028-component-stage-measurements.log')
     # Failed Core status can reset Helper to zero while its guarded helper is
     # still alive. Retain the exact pre-load process, never the mutable status.
     if($comparisonHelper){
@@ -155,7 +155,7 @@ try{
      }
     }
     if(!(RecoverWithDeadline)){throw 'Recovery after legacy comparison failed'}
-    Write-Warning 'Released 0.2.7 failed the additional component overload comparison; failure evidence saved.'
+    Write-Warning 'Released 0.2.8 failed the additional component overload comparison; failure evidence saved.'
    }
   }
  } finally {
@@ -189,9 +189,9 @@ try{
  $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'candidate-stage-measurements.log')
  $client=[CorePipe]::new((Join-Path $root 'build/native-baseline/connect-desktop-core.exe'),(Join-Path $out 'private-profile'))
  AwaitCore 1 10;$client.Send(2);AwaitCore 3
- MeasureNativeDuplex 'released-027'
+ MeasureNativeDuplex 'released-028'
  $client.Send(3);AwaitCore 1 10;$client.Send(5);if(!$client.Process.WaitForExit(10000)){throw 'Baseline shutdown after comparison hung'}
- $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-027-stage-measurements.log')
+ $client.Errors.GetAwaiter().GetResult() | Set-Content (Join-Path $out 'released-028-stage-measurements.log')
  $guestWriter.WriteLine('latency-clear');AwaitGuest '^LAB_LATENCY_CLEAR$'
  $guestWriter.WriteLine('resume-captures');AwaitGuest '^LAB_CAPTURES_RESUMED$'
  # Performance traffic has its own counters. Preserve complete captures of
