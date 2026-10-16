@@ -20,7 +20,9 @@ jobs:
       - run: go vet ./...
       - name: Test pinned QUIC packet packing and transport
         working-directory: third_party/quic-go
-        run: go test -race -count=1 . ./internal/wire
+        run: |
+          go test -race -count=1 .
+          go test -count=1 ./internal/wire
 
       - run: go build ./cmd/connect-core
       - run: go build ./cmd/connect-control

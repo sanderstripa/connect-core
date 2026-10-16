@@ -9,3 +9,8 @@ https://www.rfc-editor.org/rfc/rfc9221.html#section-5
 A frame not fitting after earlier data remains queued for the next packet.
 Oversized-first-frame behavior and independent frame payloads are preserved.
 This is a maintained local dependency patch, not an upstream release.
+
+The original internal/testdata PEM/key files are public upstream test fixtures,
+not CONNECT credentials. The wire parser allocation assertion runs without
+race instrumentation (sync.Pool intentionally drops entries under race). The
+complete QUIC transport package and CONNECT tests still run with race enabled.
