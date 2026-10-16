@@ -23,3 +23,6 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
+
+// Pinned v0.62.0 source with the documented DATAGRAM packing patch.
+replace github.com/quic-go/quic-go => ./third_party/quic-go

@@ -18,6 +18,10 @@ jobs:
           go-version: '1.27.0'
       - run: go test -race -count=1 -v ./...
       - run: go vet ./...
+      - name: Test pinned QUIC packet packing and transport
+        working-directory: third_party/quic-go
+        run: go test -race -count=1 . ./internal/wire
+
       - run: go build ./cmd/connect-core
       - run: go build ./cmd/connect-control
       - run: go build ./cmd/connect-ui

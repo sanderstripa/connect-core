@@ -74,7 +74,7 @@ jobs:
       - name: Build component reflector with immutable 0.2.7 protocol implementation
         shell: pwsh
         run: |
-          New-Item protocol-baseline-source/scripts/native-packet-perf -ItemType Directory | Out-Null
+          New-Item protocol-baseline-source/scripts/native-packet-perf -ItemType Directory -Force | Out-Null
           Copy-Item scripts/native-packet-perf/main.go protocol-baseline-source/scripts/native-packet-perf/
           Push-Location protocol-baseline-source
           try { go build -o ../build/native-packet-perf-027.exe ./scripts/native-packet-perf; if ($LASTEXITCODE) { throw 'Protocol baseline build failed' } } finally { Pop-Location }

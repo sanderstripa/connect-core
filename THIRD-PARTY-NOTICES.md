@@ -3,6 +3,9 @@
 Pinned sources and checksums are recorded in go.mod/go.sum. License texts:
 
 - quic-go v0.62.0: MIT, quic-go contributors, third_party/licenses/quic-go-MIT.txt.
+  Pinned local source in third_party/quic-go has the bounded DATAGRAM packing
+  patch documented in third_party/quic-go/CONNECT-PATCH.md; it is not an
+  unmodified upstream build.
 - WireGuard-Go TUN package ecfc5a8d5446: MIT, WireGuard LLC, third_party/licenses/wireguard-go-MIT.txt.
 - Wintun Go bindings 0fa3db229ce2: MIT, WireGuard LLC, third_party/licenses/wintun-bindings-MIT.txt.
 - Go x/crypto v0.57.0, x/net v0.59.0, x/sys v0.48.0: BSD-3-Clause, The Go Authors; corresponding x-*-BSD.txt texts.
