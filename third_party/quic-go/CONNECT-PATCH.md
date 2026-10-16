@@ -14,3 +14,8 @@ The original internal/testdata PEM/key files are public upstream test fixtures,
 not CONNECT credentials. The wire parser allocation assertion runs without
 race instrumentation (sync.Pool intentionally drops entries under race). The
 complete QUIC transport package and CONNECT tests still run with race enabled.
+
+Public test key provenance verified byte-for-byte against:
+https://raw.githubusercontent.com/quic-go/quic-go/v0.62.0/http3/internal/testdata/priv.key
+SHA256: 1a0066fcd8be2b1397002fe040bb28c221c539ef44d165556d56eb107f78c4c2
+Both upstream testdata copies are identical; neither is a CONNECT device key.

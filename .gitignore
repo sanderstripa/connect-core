@@ -24,3 +24,6 @@ __pycache__/
 !third_party/quic-go/internal/testdata/ca.pem
 !third_party/quic-go/internal/testdata/cert.pem
 !third_party/quic-go/internal/testdata/priv.key
+!third_party/quic-go/http3/internal/testdata/ca.pem
+!third_party/quic-go/http3/internal/testdata/cert.pem
+!third_party/quic-go/http3/internal/testdata/priv.key
