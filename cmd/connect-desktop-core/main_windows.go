@@ -452,6 +452,7 @@ func main() {
 	if len(os.Args) != 2 || os.Args[1] != "--ipc" {
 		return
 	}
+	defer startLabCPUProfile()()
 	path, e := storePath()
 	if e != nil {
 		return

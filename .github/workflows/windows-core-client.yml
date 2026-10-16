@@ -37,6 +37,12 @@ jobs:
           go-version: '1.27.0'
       - run: go test -race -count=1 ./...
       - run: go vet ./...
+      - name: Measure Go packet pipe without network changes
+        shell: pwsh
+        run: |
+          New-Item desktop-vm-artifacts -ItemType Directory -Force | Out-Null
+          go test ./internal/desktop -run '^$' -bench BenchmarkPacketPipe -benchtime=2s -count=3 | Tee-Object desktop-vm-artifacts/go-pipe-benchmark.log
+          if ($LASTEXITCODE) { throw 'Go packet pipe benchmark failed' }
       - run: go build -trimpath -ldflags="-s -w" -o dist/connect-desktop-core.exe ./cmd/connect-desktop-core
       - run: go build -o build/native-packet-perf.exe ./scripts/native-packet-perf
       - run: cmake -S apps/windows-core-client -B build/desktop -A x64
@@ -83,6 +89,22 @@ jobs:
           name: desktop-disposable-linux-boot
           path: vm-boot/
       - run: ./scripts/desktop-vm-ci.ps1
+      - name: Summarize completed worker CPU profiles
+        if: always()
+        shell: pwsh
+        run: |
+          $completedProfiles = 0
+          Get-ChildItem desktop-vm-artifacts -Recurse -Filter 'worker-cpu-*.pprof' | ForEach-Object {
+            $summary = & go tool pprof -top -nodecount=40 $_.FullName 2>&1
+            if ($LASTEXITCODE -eq 0) {
+              $completedProfiles++
+              $summary | Set-Content (Join-Path desktop-vm-artifacts ($_.BaseName + '-cpu-summary.log'))
+            } else {
+              Write-Host "Incomplete profile from intentionally killed worker: $($_.Name)"
+            }
+          }
+          if ($completedProfiles -eq 0) { throw 'No completed worker CPU profile; profiling evidence missing' }
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:

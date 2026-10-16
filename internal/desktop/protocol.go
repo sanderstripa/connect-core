@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 )
 
 const Version = 2
@@ -53,23 +54,36 @@ func Read(r io.Reader) (byte, []byte, error) {
 	_, e := io.ReadFull(r, b)
 	return h[3], b, e
 }
+
+// Normal tunnel packets fit in this reusable frame. Large control messages
+// allocate only their bounded actual size, rather than retaining large buffers.
+var frameBuffers = sync.Pool{New: func() any { return new([2048]byte) }}
+
 func Write(w io.Writer, kind byte, b []byte) error {
 	if len(b) > MaxPayload {
 		return errors.New("oversized IPC frame")
 	}
-	h := []byte{'C', 'C', Version, kind, 0, 0, 0, 0}
-	binary.LittleEndian.PutUint32(h[4:], uint32(len(b)))
-	for _, p := range [][]byte{h, b} {
-		for len(p) > 0 {
-			n, e := w.Write(p)
-			if e != nil {
-				return e
-			}
-			if n == 0 {
-				return io.ErrShortWrite
-			}
-			p = p[n:]
+	var frame []byte
+	if len(b)+8 <= 2048 {
+		buffer := frameBuffers.Get().(*[2048]byte)
+		defer frameBuffers.Put(buffer)
+		frame = buffer[:len(b)+8]
+	} else {
+		frame = make([]byte, len(b)+8)
+	}
+	frame[0], frame[1], frame[2], frame[3] = 'C', 'C', Version, kind
+	binary.LittleEndian.PutUint32(frame[4:8], uint32(len(b)))
+	copy(frame[8:], b)
+	// One immediate write in the usual case: no batching timer or added latency.
+	for len(frame) > 0 {
+		n, e := w.Write(frame)
+		if e != nil {
+			return e
 		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		frame = frame[n:]
 	}
 	return nil
 }

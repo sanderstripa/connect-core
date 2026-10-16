@@ -2,9 +2,46 @@ package desktop
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"testing"
 )
+
+type partialWriter struct {
+	bytes.Buffer
+	limit, calls int
+}
+
+func (w *partialWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if len(p) > w.limit {
+		p = p[:w.limit]
+	}
+	return w.Buffer.Write(p)
+}
+
+func TestCombinedFrameWrites(t *testing.T) {
+	for _, size := range []int{0, 1100, 2040, 2041, MaxPayload} {
+		payload := bytes.Repeat([]byte{byte(size)}, size)
+		for _, limit := range []int{3, MaxPayload + 8} {
+			w := &partialWriter{limit: limit}
+			if err := Write(w, ToTUN, payload); err != nil {
+				t.Fatal(err)
+			}
+			if limit == MaxPayload+8 && w.calls != 1 {
+				t.Fatal("frame split across writes")
+			}
+			kind, got, err := Read(&w.Buffer)
+			if err != nil || kind != ToTUN || !bytes.Equal(got, payload) {
+				t.Fatalf("size %d: corrupted frame: %v", size, err)
+			}
+		}
+	}
+	w := &partialWriter{limit: 0}
+	if err := Write(w, ToTUN, []byte{1}); err != io.ErrShortWrite {
+		t.Fatalf("zero write: %v", err)
+	}
+}
 
 // Real Windows/Unix pipe throughput, without routes, TUN or network changes.
 func BenchmarkPacketPipe(b *testing.B) {
