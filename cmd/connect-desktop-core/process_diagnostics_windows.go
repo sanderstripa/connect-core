@@ -4,7 +4,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -38,6 +40,16 @@ func (b *nativeBridge) reportCPU() {
 		p := &processes[i]
 		p.kernel, p.user, p.valid = processTimes(p.handle)
 	}
+	// Read the owned adapter's kernel counters separately from user-space
+	// allocation/queue drops; zero ring drops alone cannot rule out driver loss.
+	var tunLuid uint64
+	name := "ccvpn-" + strconv.Itoa(os.Getpid())
+	if adapter, e := net.InterfaceByName(name); e == nil {
+		row := windows.MibIfRow2{InterfaceIndex: uint32(adapter.Index)}
+		if windows.GetIfEntry2Ex(windows.MibIfTableNormal, &row) == nil && windows.UTF16ToString(row.Alias[:]) == name {
+			tunLuid = row.InterfaceLuid
+		}
+	}
 	last := time.Now()
 	report := func() {
 		now := time.Now()
@@ -49,6 +61,12 @@ func (b *nativeBridge) reportCPU() {
 				fmt.Fprintf(os.Stderr, "CONNECT process CPU: role=%s interval_ms=%d kernel_ms=%d user_ms=%d\n", p.name, interval, k-p.kernel, u-p.user)
 			}
 			p.kernel, p.user, p.valid = k, u, ok
+		}
+		if tunLuid != 0 {
+			row := windows.MibIfRow2{InterfaceLuid: tunLuid}
+			if windows.GetIfEntry2Ex(windows.MibIfTableNormal, &row) == nil && windows.UTF16ToString(row.Alias[:]) == name {
+				fmt.Fprintf(os.Stderr, "CONNECT owned TUN driver: sent_bytes=%d received_bytes=%d outbound_discards=%d inbound_discards=%d outbound_errors=%d inbound_errors=%d\n", row.OutOctets, row.InOctets, row.OutDiscards, row.InDiscards, row.OutErrors, row.InErrors)
+			}
 		}
 		last = now
 	}

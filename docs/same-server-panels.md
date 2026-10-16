@@ -32,3 +32,10 @@ DATAGRAM with mutual TLS; it does not run Xray or Sudoku inside this transport.
 Further throughput changes require matched-path bidirectional measurements and
 stage/CPU/drop counters, rather than assuming another protocol's speed or a
 nearer server's result. This release does not claim a throughput improvement.
+
+For continued upload investigation the Windows diagnostics now also read the
+owned Wintun adapter's kernel discard/error counters every 30 seconds, alongside
+worker/helper CPU and existing stage timings. These are separate from helper
+queue drops and inbound Wintun allocation failures; they do not change routing
+or increase buffers. A completed speed test followed by Disconnect preserves
+these diagnostics without requiring a new VPS login.
