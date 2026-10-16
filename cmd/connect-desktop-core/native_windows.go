@@ -44,7 +44,7 @@ type nativeBridge struct {
 }
 type nativeView struct {
 	bridge      *nativeBridge
-	packets     *ipvpn.PacketQueue
+	packets     *ipvpn.AckQueue
 	done        chan struct{}
 	once        sync.Once
 	diagnostics sync.Mutex
@@ -293,7 +293,7 @@ func (b *nativeBridge) read() {
 	}
 }
 func (b *nativeBridge) view() *nativeView {
-	v := &nativeView{bridge: b, packets: ipvpn.NewPacketQueue(ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
+	v := &nativeView{bridge: b, packets: ipvpn.NewAckQueue(ipvpn.PacketQueueSize), done: make(chan struct{}), rejected: map[string]uint64{}}
 	b.mu.Lock()
 	b.active = v
 	b.mu.Unlock()
@@ -301,30 +301,44 @@ func (b *nativeBridge) view() *nativeView {
 }
 func (v *nativeView) Read(p []byte) (int, error) {
 	for {
+		queued, ok := v.packets.Pop()
+		if !ok {
+			select {
+			case <-v.done:
+				return 0, io.EOF
+			case <-v.bridge.done:
+				return 0, io.EOF
+			case <-v.packets.Ready():
+				continue
+			}
+		}
 		select {
 		case <-v.done:
 			return 0, io.EOF
 		case <-v.bridge.done:
 			return 0, io.EOF
-		case queued := <-v.packets.Ready():
-			v.bridge.stats.NativeQueue.End(queued.At)
-			pkt := queued.Data
-			src, _, err := ipvpn.Packet(pkt)
-			reason := ""
-			if err != nil {
-				reason = err.Error()
-			} else if src != v.bridge.policy.Device {
-				reason = "source differs from certificate lease"
-			} else if !v.bridge.policy.Allows(pkt, true) {
-				reason = "destination outside policy"
-			}
-			if reason != "" {
-				v.diagnostics.Lock()
-				v.rejected[reason]++
-				v.diagnostics.Unlock()
-			}
-			return copy(p, pkt), nil
+		default:
 		}
+		if ipvpn.PureTCPACK(queued.Data) {
+			v.bridge.stats.AckQueue.End(queued.At)
+		}
+		v.bridge.stats.NativeQueue.End(queued.At)
+		pkt := queued.Data
+		src, _, err := ipvpn.Packet(pkt)
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		} else if src != v.bridge.policy.Device {
+			reason = "source differs from certificate lease"
+		} else if !v.bridge.policy.Allows(pkt, true) {
+			reason = "destination outside policy"
+		}
+		if reason != "" {
+			v.diagnostics.Lock()
+			v.rejected[reason]++
+			v.diagnostics.Unlock()
+		}
+		return copy(p, pkt), nil
 	}
 }
 func (v *nativeView) Write(p []byte) (int, error) {
@@ -350,6 +364,7 @@ func (v *nativeView) Close() error {
 			fmt.Fprintf(os.Stderr, "CONNECT local packet rejection: reason=%s count=%d\n", reason, count)
 		}
 		v.diagnostics.Unlock()
+		fmt.Fprintf(os.Stderr, "CONNECT TCP ACK priority: queued=%d\n", v.packets.Prioritized.Load())
 		fmt.Fprintf(os.Stderr, "CONNECT network counters: sent=%d received=%d dropped=%d\n", v.bridge.stats.Sent.Load(), v.bridge.stats.Received.Load(), v.bridge.stats.Dropped.Load())
 		v.bridge.mu.Lock()
 		if v.bridge.active == v {

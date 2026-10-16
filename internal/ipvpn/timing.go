@@ -76,6 +76,7 @@ func (s *Stats) Report(w io.Writer) {
 	}
 	fmt.Fprintf(w, "CONNECT drop reasons: policy=%d queue_capacity=%d inactive=%d wintun=%d invalid_tun=%d other=%d\n", policy, queue, inactive, ring, invalid, other)
 	s.NativeQueue.Report(w, "native_queue")
+	s.AckQueue.Report(w, "tcp_ack_queue")
 	s.ReceiveQueue.Report(w, "receive_queue")
 	s.SendQueue.Report(w, "server_send_queue")
 	s.DatagramSend.Report(w, "quic_send")
