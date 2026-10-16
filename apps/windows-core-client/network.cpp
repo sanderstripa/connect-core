@@ -173,7 +173,12 @@ void removeOwnedAdapter(const GUID& expected,NET_LUID old){
   if(!SetupDiSetClassInstallParamsW(devices,&device,&removal.ClassInstallHeader,sizeof(removal))||!SetupDiCallClassInstaller(DIF_REMOVE,devices,&device)){error=GetLastError();break;}
   error=ERROR_SUCCESS;break;
  }
- SetupDiDestroyDeviceInfoList(devices);if(!found||error)throw error;
+ SetupDiDestroyDeviceInfoList(devices);
+ // Closing a crashed helper can asynchronously remove its software device
+ // between the interface inventory and PnP enumeration/removal. Success still
+ // requires the exact journaled GUID/LUID to be absent, never merely an API
+ // error or a live process. Identity mismatches retain the guard as before.
+ if(!found||error){if(!ownedInterfacePresent(expected,old))return;throw error;}
  for(int i=0;i<100;++i){if(!ownedInterfacePresent(expected,old))return;Sleep(100);}
  throw DWORD(ERROR_TIMEOUT);
 }

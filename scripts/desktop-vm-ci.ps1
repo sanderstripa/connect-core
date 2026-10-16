@@ -64,7 +64,8 @@ public static class FailedCIGuard {
 '@
 function RecoverWithDeadline {
  $recovery=Start-Process (Join-Path $dist 'ConnectCoreNetwork.exe') -ArgumentList '--recover' -WindowStyle Hidden -PassThru
- if(!$recovery.WaitForExit(15000)){$recovery.Kill();$recovery.WaitForExit();return $false}
+ if(!$recovery.WaitForExit(15000)){$recovery.Kill();$recovery.WaitForExit();Add-Content (Join-Path $out 'recovery-attempts.log') 'timeout=true';return $false}
+ Add-Content (Join-Path $out 'recovery-attempts.log') ('exit_code='+$recovery.ExitCode)
  return $recovery.ExitCode -eq 0
 }
 function ReceiveCapture([string]$path){
