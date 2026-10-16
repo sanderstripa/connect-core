@@ -94,6 +94,7 @@ jobs:
             desktop-vm-artifacts/*probes.json
             desktop-vm-artifacts/pipe-performance.json
             desktop-vm-artifacts/*adapters.json
+            desktop-vm-artifacts/same-ip-panel-route.json
             desktop-vm-artifacts/final-routes.json
             desktop-vm-artifacts/final-addresses.json
             desktop-vm-artifacts/wfp-*.xml
