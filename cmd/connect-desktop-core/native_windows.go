@@ -5,15 +5,18 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/Microsoft/go-winio"
+	"github.com/quic-go/quic-go"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"golang.org/x/sys/windows"
 	"io"
+	"math/bits"
 	"net"
 	"net/netip"
 	"os"
@@ -22,10 +25,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 type nativeBridge struct {
+	underlay        uint32
 	intentionalStop atomic.Bool
 	conn            net.Conn
 	mu              sync.Mutex
@@ -157,6 +162,16 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	if e != nil {
 		return nil, e
 	}
+	ep := netip.MustParseAddrPort(cfg.Endpoint)
+	var underlay uint32
+	if !ep.Addr().IsLoopback() {
+		if e = windows.GetBestInterfaceEx(&windows.SockaddrInet4{Addr: ep.Addr().As4()}, &underlay); e != nil {
+			return nil, fmt.Errorf("transport interface: %w", e)
+		}
+		if underlay == 0 {
+			return nil, errors.New("transport interface unavailable")
+		}
+	}
 	conn, e := openHelper(ctx)
 	if e != nil {
 		return nil, e
@@ -169,7 +184,6 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 	}()
 	plan := make([]byte, 20)
 	binary.LittleEndian.PutUint32(plan, 1)
-	ep := netip.MustParseAddrPort(cfg.Endpoint)
 	a := ep.Addr().As4()
 	copy(plan[4:8], a[:])
 	ip := netip.MustParseAddr(cfg.DeviceIP).As4()
@@ -198,7 +212,7 @@ func openNative(ctx context.Context, cfg ipvpn.Config, stats *ipvpn.Stats) (*nat
 			return nil, err
 		}
 	}
-	b := &nativeBridge{conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""], helperPID: helperPID}
+	b := &nativeBridge{underlay: underlay, conn: conn, done: make(chan struct{}), ack: make(chan uint32, 1), stats: stats, policy: policies[""], helperPID: helperPID}
 	success = true
 	go b.read()
 	go b.reportCPU()
@@ -393,4 +407,35 @@ func recoverNative(ctx context.Context) error {
 		return errors.New("explicit network recovery failed")
 	}
 	return nil
+}
+
+// Only the encrypted UDP transport bypasses the VPN routes. Application traffic
+// to the same public server IP must continue through the tunnel.
+func (b *nativeBridge) dial(ctx context.Context, address string, t *tls.Config, want netip.Addr) (*quic.Conn, error) {
+	remote, err := net.ResolveUDPAddr("udp4", address)
+	if err != nil {
+		return nil, err
+	}
+	lc := underlayListenConfig(b.underlay)
+	pc, err := lc.ListenPacket(ctx, "udp4", "0.0.0.0:0")
+	if err != nil {
+		return nil, fmt.Errorf("transport socket: %w", err)
+	}
+	return ipvpn.DialPacket(ctx, pc, remote, t, want)
+}
+
+func underlayListenConfig(index uint32) net.ListenConfig {
+	return net.ListenConfig{Control: func(network, address string, raw syscall.RawConn) error {
+		if index == 0 {
+			return nil
+		} // loopback-only disposable fixtures
+		var optionErr error
+		if err := raw.Control(func(fd uintptr) {
+			// Winsock IP_UNICAST_IF requires the interface index in network byte order.
+			optionErr = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, 31, int(bits.ReverseBytes32(index)))
+		}); err != nil {
+			return err
+		}
+		return optionErr
+	}}
 }

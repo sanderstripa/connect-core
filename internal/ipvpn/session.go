@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"sync"
@@ -69,6 +70,24 @@ func Dial(ctx context.Context, address string, t *tls.Config, want netip.Addr) (
 	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c, e := quic.DialAddr(hctx, address, t, QUIC())
+	return finishDial(hctx, c, e, want)
+}
+
+// DialPacket takes ownership of pc, including on authentication or handshake failure.
+func DialPacket(ctx context.Context, pc net.PacketConn, address net.Addr, t *tls.Config, want netip.Addr) (*quic.Conn, error) {
+	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	c, err := quic.Dial(hctx, pc, address, t, QUIC())
+	c, err = finishDial(hctx, c, err, want)
+	if err != nil {
+		_ = pc.Close()
+		return nil, err
+	}
+	context.AfterFunc(c.Context(), func() { _ = pc.Close() })
+	return c, nil
+}
+
+func finishDial(hctx context.Context, c *quic.Conn, e error, want netip.Addr) (*quic.Conn, error) {
 	if e != nil {
 		return nil, e
 	}

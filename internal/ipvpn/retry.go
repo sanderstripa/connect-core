@@ -27,11 +27,17 @@ func TransientDialError(err error) bool {
 }
 
 func DialWithRetry(ctx context.Context, address string, t *tls.Config, want netip.Addr, retry func(int, time.Duration)) (*quic.Conn, error) {
+	return DialWithRetryUsing(ctx, address, t, want, retry, Dial)
+}
+
+// DialWithRetryUsing preserves the same authentication and transient retry policy
+// while allowing the OS client to bind only its transport socket to the underlay.
+func DialWithRetryUsing(ctx context.Context, address string, t *tls.Config, want netip.Addr, retry func(int, time.Duration), dial func(context.Context, string, *tls.Config, netip.Addr) (*quic.Conn, error)) (*quic.Conn, error) {
 	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var last error
 	for attempt := 1; ; attempt++ {
-		c, err := Dial(deadline, address, t, want)
+		c, err := dial(deadline, address, t, want)
 		if err == nil {
 			return c, nil
 		}

@@ -266,6 +266,30 @@ try{
  if($remaining.Count){throw 'Owned helper remained after disconnect'}
  ReceiveCapture (Join-Path $out 'linux-underlay.pcap')
  python "$PSScriptRoot/verify-vm-capture.py" (Join-Path $out 'linux-underlay.pcap') | Set-Content (Join-Path $out 'linux-capture-verification.json');if($LASTEXITCODE){throw 'Linux underlay contained plaintext'}
+ # Regression: a non-loopback server must NOT acquire an IP-wide physical
+ # /32 exception. The fixture uses TEST-NET-2, never a user's VPS. A previous
+ # client created the host route here and fails this assertion. No server is
+ # expected at this address; only the encrypted UDP socket may use underlay.
+ $routeCfg=$cfg | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+ $routeCfg.endpoint='198.51.100.2:17444'
+ $routeProfile=Join-Path $out 'private-route-client.json'
+ $routeCfg | ConvertTo-Json -Depth 10 | Set-Content $routeProfile -Encoding utf8NoBOM
+ $client=[CorePipe]::new((Join-Path $dist 'connect-desktop-core.exe'),(Join-Path $out 'private-route-profile'))
+ $client.Send(1,$routeProfile);AwaitCore 1 10;$client.Send(2)
+ $deadline=[DateTime]::UtcNow.AddSeconds(15)
+ do {
+  $route=@(Find-NetRoute -RemoteIPAddress '198.51.100.2' | Where-Object {$_.DestinationPrefix})
+  $tun=@(Get-NetAdapter -Name ('ccvpn-'+$client.Process.Id) -ErrorAction SilentlyContinue)
+  if($tun.Count -eq 1 -and $route.Count -eq 1 -and $route[0].InterfaceIndex -eq $tun[0].ifIndex){break}
+  Start-Sleep -Milliseconds 100
+ }while([DateTime]::UtcNow -lt $deadline -and !$client.Process.HasExited)
+ if($tun.Count -ne 1 -or $route.Count -ne 1 -or $route[0].InterfaceIndex -ne $tun[0].ifIndex){throw 'Same-IP panel destination bypasses the tunnel'}
+ if(@(Get-NetRoute -DestinationPrefix '198.51.100.2/32' -ErrorAction SilentlyContinue).Count){throw 'IP-wide endpoint exclusion reappeared'}
+ $route | Select-Object DestinationPrefix,InterfaceIndex,NextHop | ConvertTo-Json | Set-Content (Join-Path $out 'same-ip-panel-route.json')
+ $client.Process.Kill();$client.Process.WaitForExit();Start-Sleep -Seconds 2
+ python "$PSScriptRoot/vm-negative-probes.py" 198.51.100.2 | Set-Content (Join-Path $out 'same-ip-route-crash-probes.json');if($LASTEXITCODE){throw 'Socket-bound transport crash exposed direct network'}
+ if(!(RecoverWithDeadline)){throw 'Socket-bound transport recovery failed'}
+ Write-Output 'SAME_SERVER_IP_APPLICATION_ROUTE_AND_FAIL_CLOSED_PASSED'
  $passed=$true
 }finally{
  if($client){$client.Status() | Set-Content (Join-Path $out 'final-core-status.log')}

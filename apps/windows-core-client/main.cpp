@@ -80,7 +80,7 @@ void paint(){
  if(!target){RECT r;GetClientRect(window,&r);if(FAILED(factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),D2D1::HwndRenderTargetProperties(window,D2D1::SizeU(r.right,r.bottom)),&target)))return;target->SetDpi(dpi,dpi);if(FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0),&brush))){release(target);return;}}
  auto bg=D2D1::ColorF(dark?0x141719:0xf5f6f7), fg=D2D1::ColorF(dark?0xeceded:0x20272b),muted=D2D1::ColorF(dark?0x9da6ad:0x64717b),card=D2D1::ColorF(dark?0x20262a:0xffffff),accent=D2D1::ColorF(dark?0x91b9a9:0x365e50);
  target->BeginDraw();target->SetTransform(D2D1::Matrix3x2F::Translation(0,-static_cast<float>(scroll)));target->Clear(bg);
- text(L"CONNECT CORE",28,25,300,title,fg);text(L"0.2.6",330,34,60,captionFont,muted);panel(394,24,96,34,card,8);text(dark?L"Светлая":L"Тёмная",407,31,80,captionFont,muted);
+ text(L"CONNECT CORE",28,25,300,title,fg);text(L"0.2.7",330,34,60,captionFont,muted);panel(394,24,96,34,card,8);text(dark?L"Светлая":L"Тёмная",407,31,80,captionFont,muted);
  text(current.mode?L"СИСТЕМНЫЙ IPv4 VPN · ИЗОЛИРОВАННЫЕ ИСПЫТАНИЯ":L"ЛАБОРАТОРНЫЙ РЕЖИМ · БЕЗ СИСТЕМНОГО VPN",28,76,470,captionFont,accent);
  panel(28,111,462,86,card);text(current.state==6?L"ОТПЕЧАТОК КЛЮЧА ДЛЯ ПОДТВЕРЖДЕНИЯ":L"ТЕКУЩИЙ СЕРВЕР",46,125,420,captionFont,muted);
  size_t len=strnlen_s(current.endpoint,128);if(current.state==6){if(len==64){text(utf8(current.endpoint,32),46,150,420,captionFont,fg);text(utf8(current.endpoint+32,32),46,172,420,captionFont,fg);}else text(L"Создание локального ключа…",46,151,420,body,fg);}else text(len?utf8(current.endpoint,static_cast<int>(len)):L"Конфигурация не добавлена",46,151,420,body,fg);
@@ -149,8 +149,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
  actionFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);actionFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
  DWORD value=0,size=4;if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\ConnectCoreLab",L"Dark",RRF_RT_REG_DWORD,nullptr,&value,&size)==ERROR_SUCCESS)dark=value!=0;
  WNDCLASSW c{};c.hInstance=instance;c.lpfnWndProc=wndproc;c.lpszClassName=L"ConnectCoreLabWindow";c.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassW(&c);
- window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE 0.2.6",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
- loadLogs();addLog(L"CONNECT CORE 0.2.6 started");if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
+ window=CreateWindowExW(0,c.lpszClassName,L"CONNECT CORE 0.2.7",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL,CW_USEDEFAULT,CW_USEDEFAULT,540,720,nullptr,nullptr,instance,nullptr);if(!window)return 1;dpi=static_cast<float>(GetDpiForWindow(window));resizeWindow();BOOL v=dark;DwmSetWindowAttribute(window,20,&v,sizeof(v));
+ loadLogs();addLog(L"CONNECT CORE 0.2.7 started");if(!startWorker())addLog(L"Не удалось запустить connect-desktop-core.exe");ShowWindow(window,show);
  if(!incoming.empty())importLink(incoming);
  MSG m;while(GetMessageW(&m,nullptr,0,0)>0){TranslateMessage(&m);DispatchMessageW(&m);}release(brush);release(target);release(body);release(captionFont);release(title);release(actionFont);release(writeFactory);release(factory);if(singleton)CloseHandle(singleton);CoUninitialize();return 0;
 }

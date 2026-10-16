@@ -333,9 +333,13 @@ func (w *worker) connect() {
 			var policies map[string]ipvpn.Policy
 			policies, e = b.Config.Validate(false)
 			if e == nil {
-				c, err := ipvpn.DialWithRetry(ctx, b.Config.Endpoint, t, policies[""].Device, func(attempt int, delay time.Duration) {
+				dial := ipvpn.Dial
+				if native != nil {
+					dial = native.dial
+				}
+				c, err := ipvpn.DialWithRetryUsing(ctx, b.Config.Endpoint, t, policies[""].Device, func(attempt int, delay time.Duration) {
 					fmt.Fprintf(os.Stderr, "CONNECT transient connection retry: attempt=%d delay_ms=%d\n", attempt, delay.Milliseconds())
-				})
+				}, dial)
 				e = err
 				if e == nil {
 					var d ipvpn.Device

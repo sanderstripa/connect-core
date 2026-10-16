@@ -1,9 +1,13 @@
 import socket
 import json
+import sys
 
 results=[]
 
-for family, host, port in [(socket.AF_INET,'1.1.1.1',80),(socket.AF_INET,'1.1.1.1',53),(socket.AF_INET6,'2606:4700:4700::1111',53)]:
+probes=[(socket.AF_INET,'1.1.1.1',80),(socket.AF_INET,'1.1.1.1',53),(socket.AF_INET6,'2606:4700:4700::1111',53)]
+if len(sys.argv)>1:
+    probes += [(socket.AF_INET,sys.argv[1],port) for port in (2097,19112,42696)]
+for family, host, port in probes:
     with socket.socket(family,socket.SOCK_DGRAM if port==53 else socket.SOCK_STREAM) as s:
         s.settimeout(1)
         try:
