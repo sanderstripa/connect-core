@@ -29,10 +29,10 @@ const PacketQueueSize = 4096
 const maxQueuedPayload = 64 << 20
 
 type Stats struct {
-	Sent, Received, Dropped, SentBytes, ReceivedBytes                         atomic.Uint64
-	PolicyDrops, QueueDrops, InactiveDrops, RingDrops                         atomic.Uint64
-	InvalidTunDrops                                                           atomic.Uint64
-	NativeQueue, AckQueue, ReceiveQueue, SendQueue, DatagramSend, DeviceWrite Timing
+	Sent, Received, Dropped, SentBytes, ReceivedBytes               atomic.Uint64
+	PolicyDrops, QueueDrops, InactiveDrops, RingDrops               atomic.Uint64
+	InvalidTunDrops                                                 atomic.Uint64
+	NativeQueue, ReceiveQueue, SendQueue, DatagramSend, DeviceWrite Timing
 }
 
 func (s *Stats) Snapshot() map[string]uint64 {
@@ -213,7 +213,7 @@ func Client(ctx context.Context, c *quic.Conn, d Device, p Policy, stats *Stats)
 type peer struct {
 	conn     *quic.Conn
 	policy   Policy
-	queue    *AckQueue
+	queue    *PacketQueue
 	incoming *PacketQueue
 }
 
@@ -371,7 +371,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				}
 				return
 			}
-			p.queue = NewAckQueue(PacketQueueSize)
+			p.queue = NewPacketQueue(PacketQueueSize)
 			p.incoming = NewPacketQueue(PacketQueueSize)
 			defer control.Release(pin)
 			mu.Lock()
@@ -386,7 +386,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				mu.Lock()
 				defer mu.Unlock()
 				delete(peers, policy.Device)
-				for _, queue := range []interface{ Pop() (QueuedPacket, bool) }{p.queue, p.incoming} {
+				for _, queue := range []*PacketQueue{p.queue, p.incoming} {
 					for {
 						packet, ok := queue.Pop()
 						if !ok {
@@ -411,21 +411,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 					select {
 					case <-c.Context().Done():
 						return
-					default:
-					}
-					queued, ok := p.queue.Pop()
-					if !ok {
-						select {
-						case <-c.Context().Done():
-							return
-						case <-p.queue.Ready():
-							continue
-						}
-					}
-					{
-						if PureTCPACK(queued.Data) {
-							stats.AckQueue.End(queued.At)
-						}
+					case queued := <-p.queue.Ready():
 						stats.SendQueue.End(queued.At)
 						pkt := queued.Data
 						queuedPayload.Add(-int64(len(pkt)))

@@ -8,18 +8,21 @@ identify queued egress delay, not the sole proven throughput bottleneck.
 Fast.com on the same Danish endpoint reported 54/11, 59/12 and 64/7 Mbit/s,
 idle RTT 100–101 ms and loaded RTT 352–536 ms.
 
-Two changes are evaluated against immutable released 0.2.7:
+The released candidate preserves the original bounded FIFO queues. A separate
+TCP ACK priority lane was evaluated and rejected: two paired Linux RTT 80 ms
+runs showed upload decreasing from 333 to 255 Mbit/s (ACK-only) and from 405
+to 315 Mbit/s (ACK + packing). These are limited laboratory comparisons, but
+sufficient negative evidence not to retain ACK scheduling as a default.
+The source/tests of that rejected experiment are removed; no pre-existing
+security or transport test is disabled.
 
-- A bounded TCP ACK lane on native client and server egress, with at most eight
-  ACKs before bulk service. FIFO is preserved within each class. Data-bearing
-  packets, SYN/FIN/RST, fragments and invalid IP headers are not classified as
-  priority ACKs. Overflow can use the existing bulk queue. No policy bypass.
-- A small local patch to pinned quic-go v0.62.0 packs up to 16 already queued
-  standard DATAGRAM frames into available QUIC packet space. No batching timer.
-  Subsequent frames that do not fit stay queued. TLS, congestion control, frame
-  payloads, packet MTU, mTLS, access control and CONNECT ALPN are unchanged.
+The remaining change is a small local patch to pinned quic-go v0.62.0. It packs
+up to 16 already queued standard DATAGRAM frames into available QUIC packet
+space, without a batching timer. Subsequent frames that do not fit stay queued.
+TLS, congestion control, frame payloads, packet MTU, mTLS, access control,
+CONNECT ALPN, and the existing FIFO order are unchanged.
 
-The second change reduces packetization overhead for small feedback packets
+This change reduces packetization overhead for small feedback packets
 without inventing a new encrypted envelope or requiring a peer wire upgrade.
 RFC 9221 section 5 permits frame coalescing. Original QUIC packer and transport
 tests run in CI in addition to CONNECT tests and real disposable VPN tests.
@@ -34,8 +37,7 @@ Sources inspected: XTLS/Xray-core v26.10.10 transport/internet/finalmask/sudoku/
 config.go; SUDOKU-ASCII/sudoku 4889b53 internal/tunnel/session_keys.go;
 https://www.rfc-editor.org/rfc/rfc9221.html#section-5
 
-A client-only upgrade works with 0.2.7 servers; symmetric server ACK scheduling
-and packet packing require updating the CONNECT server as well. No active VPS
+A client-only upgrade works with 0.2.7 servers; symmetric server packet packing require updating the CONNECT server as well. No active VPS
 or primary Windows routes/DNS/firewall are changed by this investigation.
 Public throughput improvement must be measured on the user's live path after
 release; disposable CI figures are not substituted for those measurements.

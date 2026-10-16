@@ -54,11 +54,7 @@ func TestNativeBridgeInvalidPacketDoesNotEndSession(t *testing.T) {
 		written <- nil
 	}()
 	select {
-	case <-v.packets.Ready():
-		p, ok := v.packets.Pop()
-		if !ok {
-			t.Fatal("signalled packet missing")
-		}
+	case p := <-v.packets.Ready():
 		if !bytes.Equal(p.Data, valid) {
 			t.Fatal("next bounded packet lost")
 		}
