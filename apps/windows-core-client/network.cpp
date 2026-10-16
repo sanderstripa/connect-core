@@ -178,8 +178,8 @@ void removeOwnedAdapter(const GUID& expected,NET_LUID old){
  // between the interface inventory and PnP enumeration/removal. Success still
  // requires the exact journaled GUID/LUID to be absent, never merely an API
  // error or a live process. Identity mismatches retain the guard as before.
- if(!found||error){if(!ownedInterfacePresent(expected,old))return;throw error;}
  for(int i=0;i<100;++i){if(!ownedInterfacePresent(expected,old))return;Sleep(100);}
+ if(!found||error)throw error;
  throw DWORD(ERROR_TIMEOUT);
 }
 void recover(){
