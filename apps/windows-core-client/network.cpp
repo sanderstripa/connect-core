@@ -71,7 +71,13 @@ bool transfer(bool reading,void* bytes,DWORD size){
  DWORD error=GetLastError(),expected=0;systemError.compare_exchange_strong(expected,error?error:ERROR_BROKEN_PIPE);return false;
 }
 bool readExact(void* p,DWORD size){return transfer(true,p,size);}
-bool frame(uint8_t kind,const void* p,DWORD size){std::lock_guard<std::mutex> lock(outputMutex);BYTE h[8]={'C','C',2,kind};memcpy(h+4,&size,4);return transfer(false,h,8)&&(!size||transfer(false,const_cast<void*>(p),size));}
+bool frame(uint8_t kind,const void* p,DWORD size){
+ std::lock_guard<std::mutex> lock(outputMutex);
+ // Use the same single-write framing measured by ConnectCorePipeBench.
+ // All outgoing messages fit the tunnel MTU (status=176, counters=80).
+ if(connect_pipe::frame(pipe,kind,p,size))return true;
+ DWORD error=GetLastError(),expected=0;systemError.compare_exchange_strong(expected,error?error:ERROR_BROKEN_PIPE);return false;
+}
 void status(uint32_t state,uint32_t code=0){BYTE b[176]{};DWORD error=systemError.load();memcpy(b,&state,4);memcpy(b+4,&code,4);memcpy(b+8,&error,4);memcpy(b+16,&stage,4);uint32_t mode=guard?1:0;memcpy(b+32,&mode,4);frame(Status,b,sizeof(b));}
 std::wstring executable(){wchar_t path[32768];DWORD n=GetModuleFileNameW(nullptr,path,32768);if(!n||n==32768)throw DWORD(ERROR_BAD_PATHNAME);return std::wstring(path,n);}
 std::wstring adjacent(const wchar_t* name){auto p=executable();return p.substr(0,p.find_last_of(L"\\/")+1)+name;}

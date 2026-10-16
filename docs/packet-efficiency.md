@@ -30,3 +30,27 @@ A client-only upgrade interoperates with 0.2.7 servers; sender-side BBR in both
 directions requires updating CONNECT on the VPS as well. No active VPS or
 primary Windows network is modified by the agent. Public speed improvement
 requires a live same-path retest and is not established by CI numbers.
+
+## Follow-up: field queue and IPC investigation
+
+User diagnostics after 0.2.8: native queue sampled mean 2904 us, max 384928 us,
+QUIC reported zero lost packets, helper/driver/queue overflow counters zero.
+Worker CPU reached about half one core averaged over some 30-second intervals;
+this does not establish a CPU saturation bottleneck. Server queue samples are
+not available in the client log, and must not be interpreted as zero delay.
+
+The helper still used two writes per frame even though the existing pipe
+benchmark measured the single-write helper in pipe_io.h. Route product framing
+through that already-tested helper, keeping output serialization and errors.
+Go IPC also combines header/payload into one immediate write, reusing a bounded
+2048-byte buffer for normal packets. No wire change, timer, batching delay,
+congestion-controller change or routing/firewall exception is introduced.
+Partial writes, zero writes and both sides of the reusable-buffer boundary
+are covered by frame integrity tests.
+
+Local Windows anonymous-pipe benchmark, three 2-second samples on Xeon E3-1230
+v2: before 247-253 MB/s, after 262-272 MB/s. This is an IPC microbenchmark,
+not VPN throughput or proof of the field bottleneck. CI additionally samples
+actual worker CPU during disposable native tests and exports symbol summaries.
+Profiles require GITHUB_ACTIONS=true plus an explicit existing profile
+directory; there is no profiling listener or default user-machine activation.
