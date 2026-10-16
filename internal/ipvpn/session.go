@@ -13,7 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
+	"github.com/sanderstripa/connect-core/internal/congestion/bbr"
 	"github.com/sanderstripa/connect-core/internal/core"
 )
 
@@ -95,6 +96,7 @@ func finishDial(hctx context.Context, c *quic.Conn, e error, want netip.Addr) (*
 	if !negotiated(c) {
 		return fail(errors.New("ALPN/datagrams required"))
 	}
+	useBBR(c)
 	s, e := c.OpenStreamSync(hctx)
 	if e != nil {
 		return fail(e)
@@ -371,6 +373,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				}
 				return
 			}
+			useBBR(c)
 			p.queue = NewPacketQueue(PacketQueueSize)
 			p.incoming = NewPacketQueue(PacketQueueSize)
 			defer control.Release(pin)
@@ -467,4 +470,12 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 			pumps.Wait()
 		}()
 	}
+}
+
+// Match Xray's standard paced BBR profile; only the QUIC congestion controller
+// changes. The authenticated TLS session and independent datagram payloads stay.
+func useBBR(c *quic.Conn) {
+	size := min(c.InitialPacketSize(), bbr.GetInitialPacketSize(c.RemoteAddr()))
+	c.SetCongestionControl(bbr.NewBbrSender(bbr.DefaultClock{}, size, bbr.ProfileStandard))
+	fmt.Fprintf(os.Stderr, "CONNECT transport: congestion=bbr profile=standard tls=%s cipher=%s\n", tls.VersionName(c.ConnectionState().TLS.Version), tls.CipherSuiteName(c.ConnectionState().TLS.CipherSuite))
 }

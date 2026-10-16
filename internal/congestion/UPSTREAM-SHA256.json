@@ -1,0 +1,47 @@
+[
+  {
+    "path": "bbr/bandwidth.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/bandwidth.go",
+    "upstream_sha256": "88c1645d59e0ef379cee2f3b40f32c5f9a9b83a1973a70c2874c75112057145c"
+  },
+  {
+    "path": "bbr/bandwidth_sampler.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/bandwidth_sampler.go",
+    "upstream_sha256": "16fb21e17af2750d0687f13eceab1d2eba61e4be7c8cff520dc873d556d9bb7e"
+  },
+  {
+    "path": "bbr/bbr_sender.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/bbr_sender.go",
+    "upstream_sha256": "2d4bf68f3479382dd22f5de133cc36235cbe4fe07be8f9057d4f6c9e6837d170"
+  },
+  {
+    "path": "bbr/bbr_sender_test.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/bbr_sender_test.go",
+    "upstream_sha256": "227e9a78359c09d3514247ab81d181c7c29abacc3e5ad746eb21bd43f6165f8b"
+  },
+  {
+    "path": "bbr/clock.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/clock.go",
+    "upstream_sha256": "189e4ad09b252e33505b67760d4e362ee34fb7b000bf69903e2747dec3bacaab"
+  },
+  {
+    "path": "bbr/packet_number_indexed_queue.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/packet_number_indexed_queue.go",
+    "upstream_sha256": "f01bdc184723d7b153713128e48758ca18fca9e4ffb157f18c2b2edecfbf7f1a"
+  },
+  {
+    "path": "bbr/ringbuffer.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/ringbuffer.go",
+    "upstream_sha256": "0a0ff11bd56a8c64a53db421b0d71560144c8690db7c726bc9fbc93465b0e589"
+  },
+  {
+    "path": "bbr/windowed_filter.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/bbr/windowed_filter.go",
+    "upstream_sha256": "e573928f676d7ab9a6b8bbfd3530eb4a99fa96bc2861e7c271e242f6d2becce2"
+  },
+  {
+    "path": "common/pacer.go",
+    "source": "https://raw.githubusercontent.com/XTLS/Xray-core/v26.10.10/transport/internet/hysteria/congestion/common/pacer.go",
+    "upstream_sha256": "ca7cb0bd5897e573050522d7c8ec85b21964843d7cd2ac2fb0929f375442ed3c"
+  }
+]

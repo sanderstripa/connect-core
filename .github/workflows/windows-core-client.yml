@@ -64,20 +64,20 @@ jobs:
       - name: Fetch immutable released native throughput baseline
         shell: pwsh
         run: |
-          Invoke-WebRequest 'https://github.com/sanderstripa/connect-core/releases/download/v0.2.5/ConnectCore-Windows-x64-545b5f6.zip' -OutFile build/native-baseline.zip
-          if ((Get-FileHash build/native-baseline.zip -Algorithm SHA256).Hash.ToLower() -ne '2333f2f126aa8dfd03c5f35c649e56ea9960b9d093971c5460d961a6ea8067b0') { throw 'Released native baseline hash mismatch' }
+          Invoke-WebRequest 'https://github.com/sanderstripa/connect-core/releases/download/v0.2.7/ConnectCore-Windows-x64-50f177d.zip' -OutFile build/native-baseline.zip
+          if ((Get-FileHash build/native-baseline.zip -Algorithm SHA256).Hash.ToLower() -ne 'e4105bb882378528b7a96c5f3f7db68e89f13e4110be38be050331bb63ff4aef') { throw 'Released native baseline hash mismatch' }
           Expand-Archive build/native-baseline.zip build/native-baseline
       - uses: actions/checkout@v4
         with:
-          ref: 545b5f62c307af7b27fdbcd5be4243e9da7fe6d7
+          ref: 50f177d13a6a3dbad4712c93cea63780c9484df7
           path: protocol-baseline-source
-      - name: Build component reflector with immutable 0.2.5 protocol implementation
+      - name: Build component reflector with immutable 0.2.7 protocol implementation
         shell: pwsh
         run: |
-          New-Item protocol-baseline-source/scripts/native-packet-perf -ItemType Directory | Out-Null
+          New-Item protocol-baseline-source/scripts/native-packet-perf -ItemType Directory -Force | Out-Null
           Copy-Item scripts/native-packet-perf/main.go protocol-baseline-source/scripts/native-packet-perf/
           Push-Location protocol-baseline-source
-          try { go build -o ../build/native-packet-perf-025.exe ./scripts/native-packet-perf; if ($LASTEXITCODE) { throw 'Protocol baseline build failed' } } finally { Pop-Location }
+          try { go build -o ../build/native-packet-perf-027.exe ./scripts/native-packet-perf; if ($LASTEXITCODE) { throw 'Protocol baseline build failed' } } finally { Pop-Location }
       - uses: actions/download-artifact@v4
         with:
           name: desktop-disposable-linux-boot

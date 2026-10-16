@@ -42,19 +42,23 @@ jobs:
       - run: sudo env CONNECT_LAB_MANAGED=1 CONNECT_LAB_ARTIFACTS="$PWD/managed-lab-artifacts" bash scripts/ip-lab-linux.sh
       - uses: actions/checkout@v4
         with:
-          ref: v0.2.5
+          ref: v0.2.7
           path: baseline-source
-      - name: Build immutable 0.2.5 throughput baseline
+      - name: Build immutable 0.2.7 throughput baseline
         working-directory: baseline-source
         run: go build -o ../bin/connect-core-baseline ./cmd/connect-core
-      - name: Measure 0.2.5 direct and QUIC TCP throughput at 0 and 80 ms RTT
+      - name: Measure 0.2.7 direct and QUIC TCP throughput at 0 and 80 ms RTT
         run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_BINARY="$PWD/bin/connect-core-baseline" CONNECT_LAB_ARTIFACTS="$PWD/performance-before" bash scripts/ip-lab-linux.sh
       - name: Measure candidate direct and QUIC TCP throughput at 0 and 80 ms RTT
         run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_ARTIFACTS="$PWD/performance-after" bash scripts/ip-lab-linux.sh
-      - name: Measure 0.2.5 at 40 Mbit per second and 80 ms RTT with concurrent ping
+      - name: Measure 0.2.7 at 40 Mbit per second and 80 ms RTT with concurrent ping
         run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_RATE_MBIT=40 CONNECT_LAB_BINARY="$PWD/bin/connect-core-baseline" CONNECT_LAB_ARTIFACTS="$PWD/limited-before" bash scripts/ip-lab-linux.sh
       - name: Measure candidate at 40 Mbit per second and 80 ms RTT with concurrent ping
         run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_RATE_MBIT=40 CONNECT_LAB_ARTIFACTS="$PWD/limited-after" bash scripts/ip-lab-linux.sh
+      - name: Measure 0.2.7 at 80 ms RTT with 0.02 percent underlay loss
+        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_RTT_MS=80 CONNECT_LAB_LOSS_PERCENT=0.02 CONNECT_LAB_BINARY="$PWD/bin/connect-core-baseline" CONNECT_LAB_ARTIFACTS="$PWD/loss-before" bash scripts/ip-lab-linux.sh
+      - name: Measure BBR at 80 ms RTT with 0.02 percent underlay loss
+        run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_PERF=1 CONNECT_LAB_PERF=1 CONNECT_LAB_RTT_MS=80 CONNECT_LAB_LOSS_PERCENT=0.02 CONNECT_LAB_ARTIFACTS="$PWD/loss-after" bash scripts/ip-lab-linux.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -64,6 +68,8 @@ jobs:
             performance-after/
             limited-before/
             limited-after/
+            loss-before/
+            loss-after/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

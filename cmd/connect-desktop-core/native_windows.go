@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Microsoft/go-winio"
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
 	"github.com/sanderstripa/connect-core/internal/desktop"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
 	"golang.org/x/sys/windows"

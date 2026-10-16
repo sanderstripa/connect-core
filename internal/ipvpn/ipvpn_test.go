@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/lab"
 )

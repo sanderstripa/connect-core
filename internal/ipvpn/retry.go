@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/quic-go/quic-go"
+	"github.com/apernet/quic-go"
 	"net"
 	"net/netip"
 	"syscall"

@@ -111,6 +111,10 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
   [[ $rate =~ ^[0-9]+$ ]] || { echo 'Invalid disposable shaping rate'; exit 1; }
   shaping=(); duration=5
   if [[ $rate != 0 ]]; then shaping=(rate "${rate}mbit"); latencies=(40); duration=10; fi
+  loss=${CONNECT_LAB_LOSS_PERCENT:-0}
+  [[ $loss =~ ^(0|0\.[0-9]+|1)$ ]] || { echo 'Invalid disposable loss percentage'; exit 1; }
+  [[ $loss == 0 ]] || shaping+=(loss "${loss}%")
+  if [[ ${CONNECT_LAB_RTT_MS:-} == 80 ]]; then latencies=(40); duration=10; fi
   for latency in "${latencies[@]}"; do
     ip netns exec "$client" tc qdisc replace dev cw root netem delay "${latency}ms" limit 20000 "${shaping[@]}"
     ip netns exec "$edge" tc qdisc replace dev ew root netem delay "${latency}ms" limit 20000 "${shaping[@]}"
@@ -132,7 +136,7 @@ if [[ ${CONNECT_LAB_PERF:-0} == 1 ]]; then
   # SIGTERM. Go handles SIGINT gracefully; SIGTERM intentionally has no handler.
   kill -INT "$clientpid"; wait "$clientpid" || true
   kill -INT "$serverpid"; wait "$serverpid" || true
-  python3 - "$artifacts" "$rate" <<'PY'
+  python3 - "$artifacts" "$rate" "$loss" <<'PY'
 import json,pathlib,sys,statistics,re
 p=pathlib.Path(sys.argv[1]);rows=[]
 for f in sorted(p.glob('*-*-*.json')):
@@ -142,7 +146,7 @@ for f in sorted(p.glob('*-*-*.json')):
     latencies=[float(v) for v in re.findall(r'time=([0-9.]+) ms',(p/(f.stem+'.ping')).read_text())]
     if len(latencies)<10: raise RuntimeError('Insufficient real latency samples: '+f.stem)
     rows.append(dict(loaded_ping_ms={'samples':len(latencies),'median':statistics.median(latencies) if latencies else None,'p95':sorted(latencies)[min(len(latencies)-1,int(len(latencies)*.95))] if latencies else None,'max':max(latencies) if latencies else None},mode=mode,added_rtt_ms=int(delay)*2,direction=direction,mbps=d['end']['sum_received']['bits_per_second']/1e6,retransmits=d['end']['sum_sent'].get('retransmits'),tcp_rtt_ms=statistics.median(rtts) if rtts else None,cpu=d['end'].get('cpu_utilization_percent')))
-out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','rate_mbit':int(sys.argv[2]),'streams':4,'results':rows}
+out={'scope':'disposable Linux TUN + QUIC; same shaped underlay; not public VPS/Windows','rate_mbit':int(sys.argv[2]),'loss_percent':float(sys.argv[3]),'streams':4,'results':rows}
 (p/'throughput-summary.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
 PY
   exit 0
