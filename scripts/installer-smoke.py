@@ -54,7 +54,9 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
     echo=subprocess.Popen(['ip','netns','exec','connect-install-fixture',str(root/'bin'/'connect-vps-probe'),'serve'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
     assert echo.stdout.readline().strip()=='ready', 'UDP service fixture not ready'
     before_firewall=network.firewall();before_routes=network.routes();before_global=pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()
-    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--source',str(root),'--endpoint','198.18.0.2:17444','--uplink','cc-eg0','--acme-directory',os.environ['CONNECT_TEST_ACME'],'--test-acme-ca',os.environ['CONNECT_TEST_CA'],'--test-probe','connect-install-fixture']
+    revision=run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()
+    package=root/'server-release'/f'ConnectCore-Linux-amd64-{revision[:7]}.tar.gz'
+    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--package',str(package),'--package-sha256',installer.sha(package),'--revision',revision,'--endpoint','198.18.0.2:17444','--uplink','cc-eg0','--acme-directory',os.environ['CONNECT_TEST_ACME'],'--test-acme-ca',os.environ['CONNECT_TEST_CA'],'--test-probe','connect-install-fixture']
     importer = None
     try:
         # Occupied-port check rejects before accounts/services/interfaces are created.
@@ -62,6 +64,7 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         assert occupied.returncode != 0 and not installer.ROOT.exists(), 'occupied port install made system changes'
         result = subprocess.run(['bash','-o','pipefail','-c','cat "$1" | bash -s -- "${@:2}"','--',str(root/'scripts'/'install-vps.sh'),*args[2:],'--panel-port','443','--revision',run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()],input='',capture_output=True,text=True)
         if result.returncode: raise RuntimeError('real installer failed: '+result.stderr)
+        assert 'Verified ready-made Linux amd64 server package' in result.stdout and 'Building connect-' not in result.stdout, 'VPS unexpectedly compiled sources'
         assert (installer.CONFIG/'panel-tls').stat().st_mode & 0o777 == 0o750, 'TLS directory inaccessible to panel group'
         assert (installer.ROOT/'releases').stat().st_mode & 0o777 == 0o755, 'restrictive caller umask blocked release traversal'
         assert (installer.ROOT/'current'/'bin'/'connect-control').stat().st_mode & 0o777 == 0o755, 'service executable permissions wrong'

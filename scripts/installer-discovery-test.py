@@ -127,4 +127,70 @@ class RuntimeIdentityTests(unittest.TestCase):
         installer.verify_runtime({'core_version':'0.2.10','core_revision':'a'*40}, {'version':'0.2.10','revision':'a'*40})
         self.assertEqual(stat.call_count,4)
 
+class ServerPackageTests(unittest.TestCase):
+    revision='a'*40
+
+    def package(self, base, arch='amd64', bad_file=False, extra=None):
+        import hashlib,io,tarfile
+        header=b'\x7fELF\x02\x01'+b'\0'*12+(62).to_bytes(2,'little')
+        files={'bin/'+n:header for n in ['connect-core','connect-control','connect-ui','connect-cert']}
+        files.update({'scripts/connect-install.py':b'# installer','scripts/connect-vps-network.py':b'# network','THIRD-PARTY-NOTICES.md':b'notices','third_party/licenses/test-MIT.txt':b'license'})
+        hashes={name:hashlib.sha256(data).hexdigest() for name,data in files.items()}
+        if bad_file: files['bin/connect-core']+=b'changed'
+        files['package.json']=json.dumps({'schema':1,'revision':self.revision,'arch':arch,'files':hashes}).encode()
+        if extra: files[extra]=b'injected'
+        archive=base/'server.tar.gz'
+        with tarfile.open(archive,'w:gz') as tar:
+            for name,data in files.items():
+                member=tarfile.TarInfo(name);member.size=len(data);tar.addfile(member,io.BytesIO(data))
+        return archive,hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def unpack(self, base, archive, digest):
+        stage=base/'stage';stage.mkdir()
+        with patch.object(installer,'ROOT',base/'installed'),patch.object(installer,'release_identity',return_value={'version':'0.2.12','revision':self.revision}):
+            return installer.unpack_server_package(archive,stage,self.revision,'amd64',digest)
+
+    def test_valid_package_without_compiler(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            base=pathlib.Path(td);archive,digest=self.package(base)
+            revision,release=self.unpack(base,archive,digest)
+            self.assertEqual(revision,self.revision)
+            self.assertTrue((release/'bin'/'connect-cert').is_file())
+
+    def test_archive_and_per_file_integrity(self):
+        import tempfile
+        for corrupt in ['archive','file']:
+            with tempfile.TemporaryDirectory() as td:
+                base=pathlib.Path(td);archive,digest=self.package(base,bad_file=corrupt=='file')
+                with self.assertRaisesRegex(RuntimeError,'checksum|SHA256'):
+                    self.unpack(base,archive,'0'*64 if corrupt=='archive' else digest)
+
+    def test_wrong_architecture_and_traversal_rejected(self):
+        import tempfile
+        for arch,extra in [('arm64',None),('amd64','../outside')]:
+            with tempfile.TemporaryDirectory() as td:
+                base=pathlib.Path(td);archive,digest=self.package(base,arch=arch,extra=extra)
+                with self.assertRaises(RuntimeError): self.unpack(base,archive,digest)
+                self.assertFalse((base/'outside').exists())
+
+    def test_insufficient_disk_fails_before_extraction(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            base=pathlib.Path(td);archive,digest=self.package(base)
+            with patch.object(installer.shutil,'disk_usage',return_value=types.SimpleNamespace(free=0)):
+                with self.assertRaisesRegex(RuntimeError,'Not enough free space'): self.unpack(base,archive,digest)
+            self.assertFalse((base/'stage'/'release').exists())
+
+    def test_published_exact_revision_and_digest_selected(self):
+        import tempfile,io
+        with tempfile.TemporaryDirectory() as td:
+            base=pathlib.Path(td);archive,digest=self.package(base)
+            asset={'name':'ConnectCore-Linux-amd64-aaaaaaa.tar.gz','state':'uploaded','size':archive.stat().st_size,'digest':'sha256:'+digest,'browser_download_url':'https://github.com/sanderstripa/connect-core/releases/download/v0.2.12/server.tar.gz'}
+            metadata=[{'draft':False,'target_commitish':self.revision,'assets':[asset]}]
+            stage=base/'stage';stage.mkdir()
+            with patch.object(installer.os,'uname',create=True,return_value=types.SimpleNamespace(machine='x86_64')),patch.object(installer.urllib.request,'urlopen',side_effect=[io.BytesIO(json.dumps(metadata).encode()),io.BytesIO(archive.read_bytes())]),patch.object(installer,'ROOT',base/'installed'),patch.object(installer,'release_identity',return_value={'version':'0.2.12','revision':self.revision}):
+                result=installer.build(types.SimpleNamespace(source=None,revision=self.revision,package=None),stage)
+                self.assertEqual(result[0],self.revision)
+
 if __name__ == '__main__': unittest.main()

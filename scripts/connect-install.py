@@ -154,20 +154,84 @@ def extract_source(archive, destination):
         # device nodes and archive-supplied ownership.
         tar.extractall(destination, filter='data')
 
+def disk_space(path, required):
+    while not path.exists(): path=path.parent
+    free=shutil.disk_usage(path).free
+    if free<required:
+        raise RuntimeError(f'Not enough free space on {path}: need {required//(1024*1024)} MiB, available {free//(1024*1024)} MiB. Existing installation was not switched; no files were deleted.')
+
+def unpack_server_package(archive, stage, revision, arch, digest):
+    import tarfile
+    if not re.fullmatch(r'[0-9a-f]{64}',digest) or sha(archive)!=digest:
+        raise RuntimeError('Server package SHA256 mismatch')
+    expected={'bin/'+n for n in ['connect-core','connect-control','connect-ui','connect-cert']} | {'scripts/connect-install.py','scripts/connect-vps-network.py','package.json'}
+    release=stage/'release'
+    with tarfile.open(archive) as tar:
+        members=tar.getmembers()
+        expected |= {m.name for m in members if re.fullmatch(r'third_party/licenses/[A-Za-z0-9._-]+',m.name)} | {'THIRD-PARTY-NOTICES.md'}
+        if len(members)>64 or len(members)!=len(expected) or {m.name for m in members}!=expected or any(not m.isfile() for m in members):
+            raise RuntimeError('Unexpected server package contents')
+        expanded=sum(m.size for m in members)
+        if expanded>512*1024*1024: raise RuntimeError('Server package exceeds size limit')
+        disk_space(stage,expanded*2+32*1024*1024);disk_space(ROOT,expanded+32*1024*1024)
+        tar.extractall(release,filter='data')
+    manifest=json.loads((release/'package.json').read_text())
+    if manifest.get('schema')!=1 or manifest.get('revision')!=revision or manifest.get('arch')!=arch or set(manifest.get('files',{}))!=expected-{'package.json'}:
+        raise RuntimeError('Server package revision/architecture/manifest mismatch')
+    for name,digest in manifest['files'].items():
+        path=release/name
+        if sha(path)!=digest: raise RuntimeError('Server package file checksum mismatch: '+name)
+        path.chmod(0o755 if name.startswith('bin/') else 0o644)
+        if name.startswith('bin/'):
+            with path.open('rb') as binary: header=binary.read(20)
+            if len(header)<20 or header[:6]!=b'\x7fELF\x02\x01' or int.from_bytes(header[18:20],'little')!={'amd64':62,'arm64':183}[arch]:
+                raise RuntimeError('Server package executable architecture mismatch')
+    (release/'package.json').unlink()
+    identity=release_identity(release)
+    if identity['revision']!=revision or not re.fullmatch(r'0\.2\.\d+',identity['version']):
+        raise RuntimeError('Server executable build identity mismatch')
+    print('Verified ready-made Linux '+arch+' server package; Core '+identity['version']+'; revision '+revision,flush=True)
+    return revision,release
+
+def prebuilt(args, stage):
+    revision=args.revision
+    if not revision or not re.fullmatch(r'[0-9a-f]{40}',revision): raise RuntimeError('A full immutable --revision SHA is required')
+    arch={'x86_64':'amd64','aarch64':'arm64'}.get(os.uname().machine)
+    if not arch: raise RuntimeError('Only Linux amd64/arm64 are supported')
+    if getattr(args,'package',None):
+        return unpack_server_package(pathlib.Path(args.package),stage,revision,arch,args.package_sha256 or '')
+    request=urllib.request.Request('https://api.github.com/repos/sanderstripa/connect-core/releases?per_page=100',headers={'Accept':'application/vnd.github+json','User-Agent':'connect-core-installer'})
+    with urllib.request.urlopen(request,timeout=30) as response: releases=json.load(response)
+    name=f'ConnectCore-Linux-{arch}-{revision[:7]}.tar.gz'
+    matches=[asset for release in releases if not release.get('draft') and release.get('target_commitish')==revision for asset in release.get('assets',[]) if asset.get('name')==name and asset.get('state')=='uploaded']
+    if len(matches)!=1: raise RuntimeError('No published server package for this exact revision. No compilation or service switch was performed; use the published release installation command.')
+    asset=matches[0];digest=asset.get('digest','')
+    if not isinstance(digest,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',digest): raise RuntimeError('Published package has no SHA256 digest')
+    if not 0<asset.get('size',0)<=256*1024*1024: raise RuntimeError('Invalid server package size')
+    url=asset.get('browser_download_url','')
+    if not url.startswith('https://github.com/sanderstripa/connect-core/releases/download/'): raise RuntimeError('Unexpected server package download origin')
+    disk_space(stage,asset['size']*8+32*1024*1024)
+    archive=stage/'server.tar.gz'
+    print('Downloading verified ready-made Linux '+arch+' server package (no Go compilation on VPS)...',flush=True)
+    with urllib.request.urlopen(url,timeout=60) as response,archive.open('wb') as output:
+        received=0
+        while True:
+            data=response.read(1024*1024)
+            if not data: break
+            received+=len(data)
+            if received>asset['size']: raise RuntimeError('Server package exceeds advertised size')
+            output.write(data)
+    if received!=asset['size']: raise RuntimeError('Incomplete server package download')
+    return unpack_server_package(archive,stage,revision,arch,digest[7:])
+
 def build(args, stage):
+    if not args.source: return prebuilt(args,stage)
     if args.source:
         source = pathlib.Path(args.source).resolve()
         revision = run('git', '-C', str(source), 'rev-parse', 'HEAD').stdout.strip()
         if args.revision and args.revision != revision: raise RuntimeError('Source revision mismatch')
         if run('git', '-C', str(source), 'status', '--porcelain', '--untracked-files=no').stdout.strip():
             raise RuntimeError('Local source has uncommitted changes')
-    else:
-        revision = args.revision
-        if not revision or not re.fullmatch(r'[0-9a-f]{40}', revision): raise RuntimeError('A full immutable --revision SHA is required')
-        archive = stage / 'source.tar.gz'
-        urllib.request.urlretrieve(f'https://codeload.github.com/sanderstripa/connect-core/tar.gz/{revision}', archive)
-        extract_source(archive, stage / 'source')
-        source = stage / 'source' / ('connect-core-' + revision)
     go = shutil.which('go')
     if not go:
         machine = os.uname().machine
@@ -184,7 +248,8 @@ def build(args, stage):
     release = stage / 'release'; (release / 'bin').mkdir(parents=True); (release / 'scripts').mkdir()
     # Bound this build only, not the VPS or neighboring VPN processes. A small
     # server must not compile many large QUIC/TLS packages concurrently.
-    env = dict(os.environ, GOCACHE=str(stage / 'gocache'), GOPATH=str(stage / 'gopath'), CGO_ENABLED='0', GOMAXPROCS='2', GOMEMLIMIT='512MiB')
+    (stage/'tmp').mkdir()
+    env = dict(os.environ, GOTMPDIR=str(stage/'tmp'), GOCACHE=str(stage / 'gocache'), GOPATH=str(stage / 'gopath'), CGO_ENABLED='0', GOMAXPROCS='2', GOMEMLIMIT='512MiB')
     for name in ['connect-core', 'connect-control', 'connect-ui', 'connect-cert']:
         print('Building ' + name + '...', flush=True)
         p = subprocess.run([go, 'build', '-p', '1', '-trimpath', '-ldflags', '-X github.com/sanderstripa/connect-core/internal/management.BuildRevision='+revision, '-o', str(release / 'bin' / name), './cmd/' + name], cwd=source, env=env, capture_output=True, text=True)
@@ -612,6 +677,7 @@ def update(args, m, revision, release):
 def main():
     p = argparse.ArgumentParser(); p.add_argument('action', nargs='?', default='install', choices=['install', 'update', 'rollback', 'uninstall', 'status', 'renew-cert'])
     p.add_argument('--tls-cert',help='Existing trusted public-IP certificate, read-only source'); p.add_argument('--tls-key',help='Matching private key, copied into protected CONNECT storage')
+    p.add_argument('--package',help='Verified offline server package');p.add_argument('--package-sha256');
     p.add_argument('--revision'); p.add_argument('--source'); p.add_argument('--endpoint'); p.add_argument('--pool'); p.add_argument('--uplink')
     p.add_argument('--panel-port', type=int); p.add_argument('--control-port', type=int); p.add_argument('--enrollment-port', type=int)
     p.add_argument('--test-acme-ca', help=argparse.SUPPRESS); p.add_argument('--test-probe', help=argparse.SUPPRESS)
@@ -647,7 +713,7 @@ def main():
         # An exact repeat needs health/recovery, not another full Go build.
         if a.action=='update' and not a.source and a.revision==m['revision']:
             update(a,m,a.revision,ROOT/'current');return
-        with tempfile.TemporaryDirectory(prefix='connect-build-') as stage:
+        with tempfile.TemporaryDirectory(prefix='connect-build-',dir='/var/tmp') as stage:
             revision, release = build(a, pathlib.Path(stage))
             if a.action == 'install': install(a, revision, release)
             else: update(a, m, revision, release)

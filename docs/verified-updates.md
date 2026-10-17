@@ -25,3 +25,24 @@ not interrupt the SSH transport inside the VPN. Other VPNs need not be stopped.
 The final output must include `Verified running Core` (or `already installed AND
 running`) and the requested revision. If it fails, retain the final error instead
 of repeating the command or uninstalling the existing installation.
+
+## 0.2.12: prebuilt server packages
+
+Normal VPS installation downloads a Linux amd64/arm64 server package published
+for the exact requested source SHA. GitHub release metadata must name that SHA
+and provide a SHA256 digest. The installer verifies the archive digest, strict
+file list, architecture, per-file checksums, and executable build identity before
+stopping services. No Go toolchain, module cache or source compilation is needed
+on the VPS. Missing/corrupt packages fail explicitly instead of silently falling
+back to a large source build. Free space is checked before extraction and release
+copying; existing data and unrelated files are not removed to free space.
+
+Explicit developer `--source` builds remain available. Their work/cache/module
+directories are confined to a private /var/tmp stage, including GOTMPDIR, rather
+than filling a small /tmp filesystem. --package with --package-sha256 supports
+verified offline installation and the disposable systemd integration test.
+
+The reported 0.2.11 failure is a confirmed compiler write failure in /tmp with
+ENOSPC. It happened before release switching. The output alone does not identify
+whether the limiting resource was a separate /tmp mount, the root filesystem,
+or filesystem inode capacity. No production cleanup was performed by the agent.

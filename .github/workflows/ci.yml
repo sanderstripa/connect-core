@@ -124,8 +124,14 @@ jobs:
       - run: python3 -m py_compile scripts/connect-install.py scripts/connect-vps-network.py scripts/installer-smoke.py
       - run: bash -n scripts/install-vps.sh
       - run: python3 scripts/installer-discovery-test.py
+      - run: python3 scripts/build-server-release.py --output server-release
       - run: go build -o bin/connect-vps-probe ./scripts/vps-probe.go
       - run: sudo env GITHUB_ACTIONS=true CONNECT_DISPOSABLE_INSTALL_TEST=1 PATH="$PATH" bash scripts/installer-acme-ci.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ConnectCore-Linux-server
+          path: server-release/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

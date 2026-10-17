@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve the installation channel once, then build only that immutable source.
+# Resolve once; install the verified ready-made server package for that revision.
 set -euo pipefail
 [[ $(uname -s) == Linux ]] || { echo 'Run on a Linux systemd VPS'; exit 1; }
 [[ -d /run/systemd/system && -c /dev/net/tun ]] || { echo 'A running systemd VPS with /dev/net/tun is required'; exit 1; }

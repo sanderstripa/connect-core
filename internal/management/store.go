@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-const Version = "0.2.11"
+const Version = "0.2.12"
 const APIVersion = 1
 
 // Set by the pinned VPS build; development builds remain explicitly unknown.
