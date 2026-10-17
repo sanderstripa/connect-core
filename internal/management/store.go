@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 )
 
-const Version = "0.2.10"
+const Version = "0.2.11"
 const APIVersion = 1
+
+// Set by the pinned VPS build; development builds remain explicitly unknown.
+var BuildRevision = "unknown"
 
 func Random() string {
 	b := make([]byte, 32)

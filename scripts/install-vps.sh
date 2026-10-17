@@ -31,6 +31,7 @@ if [[ -z $revision ]]; then
   args+=(--revision "$revision")
 fi
 [[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo 'Cannot resolve an immutable CONNECT revision'; exit 1; }
+echo "CONNECT requested revision: $revision"
 stage=$(mktemp -d /var/tmp/connect-installer.XXXXXXXX)
 trap 'rm -rf -- "$stage"' EXIT
 curl --proto '=https' --tlsv1.2 -fsSL "https://codeload.github.com/sanderstripa/connect-core/tar.gz/$revision" -o "$stage/source.tar.gz"

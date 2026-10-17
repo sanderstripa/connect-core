@@ -102,4 +102,29 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'cloud NAT'): installer.prepare_install(self.args())
         ports.assert_not_called()
 
+class RuntimeIdentityTests(unittest.TestCase):
+    def test_old_server_version_cannot_pass(self):
+        with self.assertRaisesRegex(RuntimeError, 'differs from installed'):
+            installer.verify_runtime({'core_version':'0.2.6'}, {'version':'0.2.10','revision':'unknown'})
+
+    def test_wrong_revision_cannot_pass(self):
+        with self.assertRaisesRegex(RuntimeError, 'revision differs'):
+            installer.verify_runtime({'core_version':'0.2.10','core_revision':'b'*40}, {'version':'0.2.10','revision':'a'*40})
+
+    @patch.object(installer.os, 'stat')
+    @patch.object(installer, 'run')
+    def test_replaced_executable_cannot_pass(self, run, stat):
+        run.return_value=types.SimpleNamespace(stdout='123')
+        stat.side_effect=[types.SimpleNamespace(st_dev=1,st_ino=10),types.SimpleNamespace(st_dev=1,st_ino=11)]
+        with self.assertRaisesRegex(RuntimeError, 'different binary'):
+            installer.verify_runtime({'core_version':'0.2.10'}, {'version':'0.2.10','revision':'unknown'})
+
+    @patch.object(installer.os, 'stat')
+    @patch.object(installer, 'run')
+    def test_matching_running_executables_pass(self, run, stat):
+        run.return_value=types.SimpleNamespace(stdout='123')
+        stat.return_value=types.SimpleNamespace(st_dev=1,st_ino=10)
+        installer.verify_runtime({'core_version':'0.2.10','core_revision':'a'*40}, {'version':'0.2.10','revision':'a'*40})
+        self.assertEqual(stat.call_count,4)
+
 if __name__ == '__main__': unittest.main()

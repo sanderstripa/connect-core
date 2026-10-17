@@ -182,10 +182,12 @@ def build(args, stage):
         if sha(archive) != item['sha256']: raise RuntimeError('Go toolchain checksum mismatch')
         extract_source(archive, stage / 'toolchain'); go = str(stage / 'toolchain' / 'go' / 'bin' / 'go')
     release = stage / 'release'; (release / 'bin').mkdir(parents=True); (release / 'scripts').mkdir()
-    env = dict(os.environ, GOCACHE=str(stage / 'gocache'), GOPATH=str(stage / 'gopath'), CGO_ENABLED='0')
+    # Bound this build only, not the VPS or neighboring VPN processes. A small
+    # server must not compile many large QUIC/TLS packages concurrently.
+    env = dict(os.environ, GOCACHE=str(stage / 'gocache'), GOPATH=str(stage / 'gopath'), CGO_ENABLED='0', GOMAXPROCS='2', GOMEMLIMIT='512MiB')
     for name in ['connect-core', 'connect-control', 'connect-ui', 'connect-cert']:
         print('Building ' + name + '...', flush=True)
-        p = subprocess.run([go, 'build', '-trimpath', '-o', str(release / 'bin' / name), './cmd/' + name], cwd=source, env=env, capture_output=True, text=True)
+        p = subprocess.run([go, 'build', '-p', '1', '-trimpath', '-ldflags', '-X github.com/sanderstripa/connect-core/internal/management.BuildRevision='+revision, '-o', str(release / 'bin' / name), './cmd/' + name], cwd=source, env=env, capture_output=True, text=True)
         if p.returncode: raise RuntimeError('Build failed: ' + p.stderr)
     for name in ['connect-install.py', 'connect-vps-network.py']:
         shutil.copy2(source / 'scripts' / name, release / 'scripts' / name)
@@ -228,7 +230,29 @@ def panel_url(m):
 def tls_context(m):
     return ssl.create_default_context(cafile=m.get('test_ca'))
 
+def release_identity(release):
+    binary=release/'bin'/'connect-control'
+    version=run(str(binary),'version').stdout.strip()
+    result=run(str(binary),'build-info',check=False)
+    info=json.loads(result.stdout) if result.returncode==0 else {}
+    if info and info.get('version')!=version: raise RuntimeError('Release version/build identity mismatch')
+    return {'version':version,'revision':info.get('revision','unknown')}
+
+def verify_runtime(status, identity):
+    if status.get('core_version')!=identity['version']:
+        raise RuntimeError('Running Core version '+str(status.get('core_version'))+' differs from installed '+identity['version'])
+    if re.fullmatch(r'[0-9a-f]{40}',identity['revision']) and status.get('core_revision')!=identity['revision']:
+        raise RuntimeError('Running Core revision differs from the requested build')
+    for service,binary in [('connect-core.service','connect-control'),('connect-ui.service','connect-ui')]:
+        pid=run('systemctl','show',service,'--property=MainPID','--value').stdout.strip()
+        if not pid.isdecimal() or int(pid)==0: raise RuntimeError(service+' has no running process')
+        expected=os.stat(ROOT/'current'/'bin'/binary)
+        actual=os.stat('/proc/'+pid+'/exe')
+        if (expected.st_dev,expected.st_ino)!=(actual.st_dev,actual.st_ino):
+            raise RuntimeError(service+' runs a different binary; check its systemd override (not modified by installer)')
+
 def health(m, password=None):
+    identity=release_identity(ROOT/'current')
     config = json.loads((STATE / 'control' / 'control.json').read_text())
     token = pathlib.Path(config['token_file']).read_text().strip()
     cookies = __import__('http.cookiejar', fromlist=['CookieJar']).CookieJar()
@@ -242,6 +266,7 @@ def health(m, password=None):
             req = urllib.request.Request('http://' + config['listen'] + '/v1/status', headers={'Authorization': 'Bearer ' + token})
             with opener.open(req, timeout=2) as response: status = json.load(response)
             if status['api_version'] != 1 or status['status'] != 'running': raise RuntimeError('real server not ready')
+            verify_runtime(status,identity)
             if m.get('socket_activation'):
                 buffers=status.get('udp_buffers',{})
                 if min(buffers.get('receive_bytes',0),buffers.get('send_bytes',0))<7*1024*1024: raise RuntimeError('Owned UDP socket buffers were not applied; keeping previous installation')
@@ -534,8 +559,16 @@ def update(args, m, revision, release):
         m.clear();m.update(candidate);save(JOURNAL/'manifest.json',m)
         run('systemctl','restart','connect-ui.service');health(m)
     if revision == m['revision']:
+        if (ROOT/'current').resolve() != ROOT/'releases'/revision:
+            raise RuntimeError('Manifest revision and current release disagree; refusing a false already-installed result')
+        try: health(m)
+        except RuntimeError:
+            print('Installed revision is not healthy; restarting only CONNECT Core and UI to verify it.')
+            for name in ['connect-ui.service','connect-core.service']: run('systemctl','stop',name)
+            for name in ['connect-core.service','connect-ui.service']: start_owned(name)
+            health(m)
         if getattr(args,'panel_port',None) is not None: change_panel_port(m,args.panel_port)
-        print('Already installed this immutable revision'); return
+        print('Requested revision is already installed AND running: '+revision+'; Core '+release_identity(ROOT/'current')['version']); return
     old = (ROOT / 'current').resolve(); target = ROOT / 'releases' / revision
     if target.exists(): raise RuntimeError('Release directory already exists; refusing overwrite')
     publish_release(release, target)
@@ -567,10 +600,14 @@ def update(args, m, revision, release):
         undo_socket_migration(m,migration)
         next_link = ROOT / 'current.next'; next_link.unlink(missing_ok=True); next_link.symlink_to(old); os.replace(next_link, ROOT / 'current')
         for name in ['connect-core.service', 'connect-ui.service']: start_owned(name)
-        health(m); shutil.rmtree(target); raise
+        health(m); shutil.rmtree(target)
+        print('UPDATE FAILED: the previous CONNECT revision was restored: '+m['revision'],file=sys.stderr)
+        raise
     m['previous_revision'] = m['revision']; m['revision'] = revision; save(JOURNAL / 'manifest.json', m)
     if getattr(args,'panel_port',None) is not None: change_panel_port(m,args.panel_port)
     print('CONNECT updated; credentials, device registrations and revocations preserved. Previous binary revision retained.')
+    print('Verified running Core: '+target_version+'; revision: '+revision)
+    print('Panel: '+panel_url(m))
 
 def main():
     p = argparse.ArgumentParser(); p.add_argument('action', nargs='?', default='install', choices=['install', 'update', 'rollback', 'uninstall', 'status', 'renew-cert'])

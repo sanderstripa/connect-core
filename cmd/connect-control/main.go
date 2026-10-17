@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"github.com/sanderstripa/connect-core/internal/core"
 	"github.com/sanderstripa/connect-core/internal/ipvpn"
@@ -41,6 +42,9 @@ func main() {
 	}
 }
 func run() error {
+	if len(os.Args) == 2 && os.Args[1] == "build-info" {
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"version": management.Version, "revision": management.BuildRevision})
+	}
 	if len(os.Args) == 2 && os.Args[1] == "version" {
 		fmt.Println(management.Version)
 		return nil

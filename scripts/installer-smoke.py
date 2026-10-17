@@ -134,6 +134,15 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
         # Health failure during an update restores the exact previous binaries,
         # without restoring a state backup that could undo the revocation.
         manifest=json.loads((installer.JOURNAL/'manifest.json').read_text());old=(installer.ROOT/'current').resolve()
+        # Replaced files do not replace the executable held by a running process.
+        binary=old/'bin'/'connect-control'; replacement=binary.with_name('connect-control.next')
+        shutil.copy2(binary,replacement);os.replace(replacement,binary)
+        try: installer.health(manifest)
+        except RuntimeError: pass
+        else: raise AssertionError('stale running executable falsely passed health')
+        installer.update(None,manifest,manifest['revision'],old)
+        installer.health(manifest)
+        assert neighbor.poll() is None, 'repeat update disturbed neighbor'
         # Reproduce the installed 0.2.4 service layout: no activation socket and
         # an unprivileged Core binding UDP itself. State/credentials stay intact.
         for name in ['connect-ui.service','connect-core.service','connect-core.socket']:
