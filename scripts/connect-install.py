@@ -644,6 +644,9 @@ def main():
                     rollback_revision = old_revision + '-rollback-' + uuid.uuid4().hex[:8]
                     update(a, m, rollback_revision, release)
                 return
+        # An exact repeat needs health/recovery, not another full Go build.
+        if a.action=='update' and not a.source and a.revision==m['revision']:
+            update(a,m,a.revision,ROOT/'current');return
         with tempfile.TemporaryDirectory(prefix='connect-build-') as stage:
             revision, release = build(a, pathlib.Path(stage))
             if a.action == 'install': install(a, revision, release)
