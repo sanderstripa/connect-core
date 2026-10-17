@@ -102,6 +102,30 @@ $('settings').onclick = settings;
 $('registrations').onclick = ()=>registrations().catch(e=>notice(e.message));
 $('add').onclick = () => enrollment().catch(e=>notice(e.message));
 $('logs').onclick = async () => { try { const events = await api('/api/logs'), body=dialog('Журнал управления'), pre=document.createElement('pre'); pre.textContent=events.length ? events.join('\n') : 'Событий пока нет'; body.append(pre); } catch(e) {notice(e.message);} };
+$('diagnostics').onclick = async () => {
+  try {
+    const report = await api('/api/diagnostics'), body = dialog('Диагностика сервера');
+    paragraph(body, 'Сервер автоматически сохраняет последние 6 минут с шагом 2 секунды. Выполни тесты скорости, затем скачай отчёт. При перезапуске CONNECT история начинается заново.');
+    const samples = report.samples || [], current = samples.at(-1);
+    const previous = current ? samples.slice(0,-1).reverse().find(s=>Date.parse(current.at)-Date.parse(s.at)>=1000) : null;
+    if (!current) paragraph(body, 'Измерений пока нет. Запусти сервер CONNECT и подожди несколько секунд.');
+    else {
+      const lines = [`Последний замер: ${new Date(current.at).toLocaleString('ru-RU')}`, `Сохранено замеров: ${samples.length}`];
+      const elapsed = previous ? (Date.parse(current.at)-Date.parse(previous.at))*1000 : 0;
+      const cpu = current.process_cpu_us != null && previous?.process_cpu_us != null && elapsed > 0 ? (current.process_cpu_us-previous.process_cpu_us)/elapsed*100 : null;
+      lines.push(`CPU процесса CONNECT: ${cpu == null ? 'нет замера' : cpu.toFixed(1)+' % одного ядра'}`);
+      for (const [key,label] of [['server_send_queue','Очередь отправки сервера'],['receive_queue','Входящая очередь сервера'],['quic_send','Передача в QUIC'],['tun_write','Запись в TUN']]) {
+        const now = current.server.timings[key], before = previous?.server.timings[key];
+        const count = before ? now.samples-before.samples : 0;
+        lines.push(`${label}: ${count > 0 ? ((now.total_us-before.total_us)/count/1000).toFixed(3)+' мс' : 'нет новых образцов'}`);
+      }
+      for (const t of current.transports) lines.push(`Сеанс ${t.session}: ${t.connected ? 'подключён' : 'завершён'}, RTT ${(t.rtt_us/1000).toFixed(1)} мс, потери QUIC ${t.packets_lost} / отправлено ${t.packets_sent}`);
+      const pre = document.createElement('pre'); pre.textContent = lines.join('\n'); body.append(pre);
+    }
+    paragraph(body, 'Показатели относятся к серверу. Отсутствие образцов не означает нулевую задержку. Оценка потерь QUIC может уменьшаться после запоздавших подтверждений. Отчёт не содержит паролей, ключей, адресов устройств или ссылок подключения.', 'field-note');
+    action(body, 'Скачать отчёт', () => download('/api/diagnostics','connect-server-diagnostics.json'));
+  } catch(e) { notice(e.message); }
+};
 $('start').onclick = async () => { if (pending) return; pending=true; try {await api('/api/server',{action:'start'});await refresh();} catch(e) {await refresh();notice(e.message);} finally {pending=false;} };
 for (const id of ['stop','restart']) $(id).onclick = () => confirmAction(id==='stop' ? 'Остановить сервер?' : 'Перезапустить сервер?', 'Все активные подключения будут закрыты.',()=>api('/api/server',{action:id,confirm:true}));
 (async()=> { try { const s=await api('/auth/session');csrf=s.csrf;signedIn();await refresh(); } catch { signedOut(); } })();

@@ -24,6 +24,12 @@ func TestAPIBoundary(t *testing.T) {
 		}
 	}
 	w := request("GET", "/v1/status", "", api.Token, "", api.Host)
+	if request("GET", "/v1/diagnostics", "", "", "", api.Host).Code != 401 {
+		t.Fatal("unauthenticated diagnostics")
+	}
+	if d := request("GET", "/v1/diagnostics", "", api.Token, "", api.Host); d.Code != 200 || !strings.Contains(d.Body.String(), `"samples"`) {
+		t.Fatal("authorized diagnostics unavailable")
+	}
 	if w.Code != 200 || strings.Contains(w.Body.String(), m.state.Config.Trust.Key) {
 		t.Fatal("unsafe status")
 	}

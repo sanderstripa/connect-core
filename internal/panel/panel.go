@@ -268,7 +268,7 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
-	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || path == "/api/registrations" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings" || path == "/api/invite" || path == "/api/registration")
+	allowed := r.Method == "GET" && (path == "/api/status" || path == "/api/diagnostics" || path == "/api/logs" || path == "/api/challenge" || path == "/api/ca" || path == "/api/registrations" || strings.HasPrefix(path, "/api/export/") || strings.HasPrefix(path, "/api/certificate/")) || r.Method == "POST" && (path == "/api/server" || path == "/api/device" || path == "/api/enroll" || path == "/api/settings" || path == "/api/invite" || path == "/api/registration")
 	if !allowed {
 		errJSON(404, "unsupported route or method")
 		return
@@ -291,8 +291,12 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	body, e := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if e != nil {
+	limit := int64(1 << 20)
+	if path == "/api/diagnostics" {
+		limit = 4 << 20
+	}
+	body, e := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if e != nil || int64(len(body)) > limit {
 		errJSON(502, "control response failed")
 		return
 	}
@@ -306,6 +310,9 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	if path == "/api/diagnostics" {
+		w.Header().Set("Content-Disposition", "attachment; filename=connect-server-diagnostics.json")
+	}
 	if strings.HasPrefix(path, "/api/export/") {
 		w.Header().Set("Content-Disposition", "attachment; filename=connect-ip-client.json")
 	}

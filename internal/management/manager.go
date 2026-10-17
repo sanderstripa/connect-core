@@ -28,16 +28,17 @@ type State struct {
 	Invitations map[string]InvitationRecord `json:"invitations,omitempty"`
 }
 type Manager struct {
-	mu      sync.Mutex
-	state   State
-	path    string
-	control *ipvpn.Control
-	cancel  context.CancelFunc
-	done    chan struct{}
-	status  string
-	started time.Time
-	events  []string
-	open    func(string) (ipvpn.Device, error)
+	mu          sync.Mutex
+	state       State
+	path        string
+	control     *ipvpn.Control
+	cancel      context.CancelFunc
+	done        chan struct{}
+	status      string
+	started     time.Time
+	events      []string
+	open        func(string) (ipvpn.Device, error)
+	diagnostics []DiagnosticSample
 }
 
 func New(path string) (*Manager, error) {
@@ -132,8 +133,17 @@ func (m *Manager) Start() error {
 	m.started = time.Now()
 	m.status = "running"
 	m.event("server started")
+	stats := &ipvpn.Stats{}
+	m.diagnostics = nil
+	collected := make(chan struct{})
+	go func() { defer close(collected); m.collectDiagnostics(ctx.Done(), stats) }()
 	go func() {
-		err := ipvpn.ServeControlled(ctx, l, d, m.control, &ipvpn.Stats{})
+		err := ipvpn.ServeControlled(ctx, l, d, m.control, stats)
+		cancel()
+		<-collected
+		// Serve has joined every peer and released its transport before this
+		// final sample. Cancellation alone does not imply peers are drained.
+		m.recordDiagnostic(stats)
 		_ = closeListener()
 		m.mu.Lock()
 		m.cancel = nil

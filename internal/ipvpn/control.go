@@ -11,11 +11,13 @@ import (
 // Persist a deny decision before calling Deny. A denied certificate cannot
 // reconnect, including when its TLS handshake was already in flight.
 type Control struct {
-	mu       sync.Mutex
-	policies map[string]Policy
-	denied   map[string]bool
-	sessions map[string]func()
-	counters map[string]Usage
+	mu            sync.Mutex
+	policies      map[string]Policy
+	denied        map[string]bool
+	sessions      map[string]func()
+	counters      map[string]Usage
+	transports    map[string]transportRecord
+	nextTransport uint64
 }
 type Usage struct {
 	Connected    bool      `json:"connected"`
@@ -25,7 +27,7 @@ type Usage struct {
 }
 
 func NewControl(p map[string]Policy) *Control {
-	return &Control{policies: p, denied: map[string]bool{}, sessions: map[string]func(){}, counters: map[string]Usage{}}
+	return &Control{policies: p, denied: map[string]bool{}, sessions: map[string]func(){}, counters: map[string]Usage{}, transports: map[string]transportRecord{}}
 }
 func (c *Control) Policy(pin string) (Policy, bool) {
 	c.mu.Lock()
@@ -49,6 +51,12 @@ func (c *Control) Admit(pin string, close func()) bool {
 func (c *Control) Release(pin string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if record, ok := c.transports[pin]; ok && record.conn != nil {
+		record.sample = readTransport(record.conn, record.sample.Session)
+		record.sample.Connected = false
+		record.conn = nil // Never retain closed QUIC buffers for diagnostics.
+		c.transports[pin] = record
+	}
 	delete(c.sessions, pin)
 	u := c.counters[pin]
 	u.Connected = false

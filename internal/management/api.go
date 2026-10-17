@@ -46,6 +46,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fail := func(e error) { JSON(w, 409, map[string]string{"error": e.Error()}) }
 	if r.Method == "GET" {
 		switch r.URL.Path {
+		case "/v1/diagnostics":
+			w.Header().Set("Content-Disposition", "attachment; filename=connect-server-diagnostics.json")
+			JSON(w, 200, a.Manager.Diagnostics())
+			return
 		case "/v1/status":
 			s := a.Manager.Snapshot()
 			s["onboarding_enabled"] = a.Broker != nil

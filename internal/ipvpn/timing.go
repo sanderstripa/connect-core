@@ -67,6 +67,27 @@ type QueuedPacket struct {
 	At   time.Time
 }
 
+// Snapshot is cumulative and approximately simultaneous across atomic counters.
+// An unsampled stage has a null mean, rather than a measured zero delay.
+func (t *Timing) Snapshot() map[string]any {
+	count := t.count.Load()
+	total := t.nanos.Load() / 1000
+	var mean *uint64
+	if count != 0 {
+		n := total / count
+		mean = &n
+	}
+	return map[string]any{"samples": count, "total_us": total, "mean_us": mean, "max_us": t.maximum.Load() / 1000, "over_10ms": t.over10ms.Load(), "over_50ms": t.over50ms.Load()}
+}
+
+func (s *Stats) DiagnosticSnapshot() map[string]any {
+	return map[string]any{
+		"packets": s.Snapshot(),
+		"drops":   map[string]uint64{"policy": s.PolicyDrops.Load(), "queue_capacity": s.QueueDrops.Load(), "inactive": s.InactiveDrops.Load(), "wintun": s.RingDrops.Load(), "invalid_tun": s.InvalidTunDrops.Load()},
+		"timings": map[string]any{"server_send_queue": s.SendQueue.Snapshot(), "receive_queue": s.ReceiveQueue.Snapshot(), "quic_send": s.DatagramSend.Snapshot(), "tun_write": s.DeviceWrite.Snapshot()},
+	}
+}
+
 func (s *Stats) Report(w io.Writer) {
 	policy, queue, inactive, ring := s.PolicyDrops.Load(), s.QueueDrops.Load(), s.InactiveDrops.Load(), s.RingDrops.Load()
 	invalid := s.InvalidTunDrops.Load()

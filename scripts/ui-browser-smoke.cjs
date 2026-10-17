@@ -46,6 +46,13 @@ async function stop(p) { if(p.exitCode!==null || p.signalCode!==null) return; co
     await page.locator('#theme').click();await page.screenshot({path:path.join(artifacts,'connect-ui-dark.png'),fullPage:true});
     await page.reload();await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark' && !document.getElementById('main').hidden);
     await page.locator('#logs').click();assert.match(await page.locator('#dialog pre').innerText(),/device rename/);await page.locator('#close-dialog').click();
+    await page.locator('#diagnostics').click();await page.getByRole('button',{name:'Скачать отчёт',exact:true}).waitFor();
+    const diagnosticDownload=page.waitForEvent('download');await page.getByRole('button',{name:'Скачать отчёт',exact:true}).click();
+    const downloaded=await diagnosticDownload;assert.equal(downloaded.suggestedFilename(),'connect-server-diagnostics.json');
+    const safeReport=await fs.readFile(await downloaded.path(),'utf8'),diagnostics=JSON.parse(safeReport);
+    assert.equal(diagnostics.schema,1);assert.ok(Array.isArray(diagnostics.samples));
+    assert.ok(!safeReport.includes(password)&&!safeReport.includes(control.token_file),'diagnostics leaked credentials');
+    await page.screenshot({path:path.join(artifacts,'server-diagnostics.png'),fullPage:true});await page.locator('#close-dialog').click();
     await page.locator('#settings').click();assert.match(await page.locator('#dialog-body').innerText(),/безопасное автообновление/);await page.locator('#close-dialog').click();
     await page.locator('#devices button').click();await page.getByRole('button',{name:'Отозвать сертификат',exact:true}).click();await page.getByRole('button',{name:'Подтвердить',exact:true}).click();await page.locator('#dialog').waitFor({state:'hidden'});await page.getByRole('cell',{name:'Отозван',exact:true}).waitFor();
     await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'connect-ui-mobile.png'),fullPage:true});

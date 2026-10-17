@@ -374,6 +374,7 @@ func ServeControlled(ctx context.Context, l *quic.Listener, d Device, control *C
 				return
 			}
 			useBBR(c)
+			control.attachTransport(pin, c)
 			p.queue = NewPacketQueue(PacketQueueSize)
 			p.incoming = NewPacketQueue(PacketQueueSize)
 			defer control.Release(pin)

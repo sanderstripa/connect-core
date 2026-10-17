@@ -61,7 +61,7 @@ func login(t *testing.T, p *Panel) (string, string) {
 }
 func TestAuthorizationCSRFExpiryLogout(t *testing.T) {
 	p := setup(t)
-	for _, path := range []string{"/api/status", "/api/logs", "/api/export/foo", "/auth/session"} {
+	for _, path := range []string{"/api/status", "/api/diagnostics", "/api/logs", "/api/export/foo", "/auth/session"} {
 		if req(p, "GET", path, "", "", "", "").Code != 401 {
 			t.Fatal("unauthenticated API")
 		}
