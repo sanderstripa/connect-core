@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory(prefix='connect-installer-check-') as td:
     before_firewall=network.firewall();before_routes=network.routes();before_global=pathlib.Path('/proc/sys/net/ipv4/ip_forward').read_text()
     revision=run('git','-C',str(root),'rev-parse','HEAD').stdout.strip()
     package=root/'server-release'/f'ConnectCore-Linux-amd64-{revision[:7]}.tar.gz'
-    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install','--package',str(package),'--package-sha256',installer.sha(package),'--revision',revision,'--endpoint','198.18.0.2:17444','--uplink','cc-eg0','--acme-directory',os.environ['CONNECT_TEST_ACME'],'--test-acme-ca',os.environ['CONNECT_TEST_CA'],'--test-probe','connect-install-fixture']
+    delivery=[] if os.environ.get('CONNECT_TEST_PUBLISHED_PACKAGE')=='1' else ['--package',str(package),'--package-sha256',installer.sha(package)]
+    args = [sys.executable,str(root/'scripts'/'connect-install.py'),'install',*delivery,'--revision',revision,'--endpoint','198.18.0.2:17444','--uplink','cc-eg0','--acme-directory',os.environ['CONNECT_TEST_ACME'],'--test-acme-ca',os.environ['CONNECT_TEST_CA'],'--test-probe','connect-install-fixture']
     importer = None
     try:
         # Occupied-port check rejects before accounts/services/interfaces are created.
